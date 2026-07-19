@@ -103,6 +103,16 @@ $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
 ```
 
+Install a local development entry point with:
+
+```powershell
+python -m pip install -e .
+agent-repl --demo
+```
+
+`python -m agent_repl --demo` remains equivalent when working directly from the
+source tree.
+
 The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.
 The next spike must define which values receive a durable representation and how
