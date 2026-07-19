@@ -23,6 +23,16 @@ class EntryPointTests(unittest.TestCase):
         self.assertIn("latest_input:", rendered)
         self.assertIn("agent> Received your message", rendered)
 
+    def test_openai_mode_explains_missing_configuration(self) -> None:
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["agent-repl", "--openai", "--data-dir", str(Path(directory))]), patch(
+                "builtins.input", side_effect=["Inspect the runtime.", ":quit"]
+            ), patch.dict("os.environ", {}, clear=True), patch("sys.stdout", output):
+                main()
+
+        self.assertIn("OpenAI setup required: Set OPENAI_API_KEY", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

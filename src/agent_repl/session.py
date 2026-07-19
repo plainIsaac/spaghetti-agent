@@ -67,6 +67,11 @@ class SingleAgentSession:
             raise RuntimeError(result.error)
         return int(result.value)
 
+    def run_openai_turn(self, driver: "OpenAIAgentDriver") -> KernelResult | None:
+        from .openai_driver import OpenAIAgentController
+
+        return OpenAIAgentController(self.supervisor, driver, self.agent).run_turn()
+
     def close(self) -> None:
         self.supervisor.close()
         self.supervisor.journal.close()

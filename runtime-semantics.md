@@ -62,6 +62,14 @@ failures do not kill the kernel and are published as high-priority presentable
 Thus user input is free-form and reliable without forcefully interrupting the
 agent or creating re-entrant execution.
 
+### Model turn inputs
+
+The initial OpenAI driver receives the current durable agent inbox and explicitly
+published agent state for one turn. It does not receive a replayed chat
+transcript. The model produces Python source that is evaluated in the persistent
+agent REPL, where it can read more state through granted capabilities and choose
+what to persist or communicate.
+
 ## State and inspection
 
 The runtime must not impose a fixed presentable-state ontology such as only

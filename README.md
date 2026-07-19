@@ -114,6 +114,23 @@ agent-repl --demo
 `python -m agent_repl --demo` remains equivalent when working directly from the
 source tree.
 
+## OpenAI agent driver
+
+Install the optional SDK and set an API key before using the live driver:
+
+```powershell
+python -m pip install -e ".[openai]"
+$env:OPENAI_API_KEY = "..."
+agent-repl --openai
+```
+
+The OpenAI integration uses the Responses API. Its default is
+`gpt-5.6-terra`, which can be replaced with `--model`. Each turn sends the
+current durable agent inbox and explicitly published state; it does not replay a
+chat transcript. The model returns Python source for the persistent agent REPL,
+where it can inspect state, acknowledge messages, publish presentation state,
+and intentionally message the user.
+
 The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.
 The next spike must define which values receive a durable representation and how

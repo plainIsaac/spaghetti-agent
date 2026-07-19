@@ -100,6 +100,12 @@ class Supervisor:
         self.publish_state(agent, "runtime", {"status": "idle"}, presenter="runtime")
         return kernel
 
+    def agent_kernel(self, agent: str) -> PersistentKernel:
+        try:
+            return self._kernels[agent]
+        except KeyError as error:
+            raise KeyError(f"No running agent kernel: {agent}") from error
+
     def start_user_kernel(self, user: str = "user", agent: str = "agent") -> PersistentKernel:
         """Start the user's persistent Python REPL with explicit read/write capabilities."""
         if user in self._kernels:

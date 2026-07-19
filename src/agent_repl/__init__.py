@@ -4,6 +4,7 @@ from .isolation import IsolatedExecution
 from .journal import InboxJournal, Message
 from .kernel import ExecutionState, KernelResult, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
+from .openai_driver import OpenAIAgentController, OpenAIAgentDriver, OpenAIConfigurationError
 from .session import SingleAgentSession
 from .supervisor import RestartReport, Supervisor
 
@@ -15,6 +16,9 @@ __all__ = [
     "Message",
     "ObservableStateRegistry",
     "ObservableValue",
+    "OpenAIAgentController",
+    "OpenAIAgentDriver",
+    "OpenAIConfigurationError",
     "PersistentKernel",
     "RestartReport",
     "SingleAgentSession",
