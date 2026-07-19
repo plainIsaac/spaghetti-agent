@@ -35,9 +35,25 @@ class KernelInbox:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
         self._messages: list[dict[str, Any]] = []
         self._call_supervisor = call_supervisor
+        self._message_handler: Callable[[dict[str, Any]], None] | None = None
 
     def add_message(self, sender: str, text: str, message_id: int | None = None) -> None:
-        self._messages.append({"id": message_id, "sender": sender, "text": text})
+        message = {"id": message_id, "sender": sender, "text": text}
+        self._messages.append(message)
+        if self._message_handler is not None:
+            try:
+                self._message_handler(message)
+            except BaseException as error:
+                self._call_supervisor(
+                    "inbox.handler_failed",
+                    {"message_id": message_id, "error": f"{type(error).__name__}: {error}"},
+                )
+
+    def on_message(self, handler: Callable[[dict[str, Any]], None]) -> None:
+        """Handle future deliveries in a later, serialized kernel execution unit."""
+        if not callable(handler):
+            raise TypeError("inbox.on_message expects a callable")
+        self._message_handler = handler
 
     def pending(self) -> list[dict[str, Any]]:
         return list(self._messages)

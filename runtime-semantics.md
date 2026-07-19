@@ -53,6 +53,12 @@ from the inbox itself:
 - A handler is scheduled as a later agent execution unit. It never runs
   synchronously inside the user's inbox-append operation.
 
+The initial handler API is `inbox.on_message(handler)`. The handler runs when
+the supervisor later delivers the already-durable message into the agent kernel;
+it therefore shares the kernel's normal serialized execution lane. Handler
+failures do not kill the kernel and are published as high-priority presentable
+`inbox_error` state.
+
 Thus user input is free-form and reliable without forcefully interrupting the
 agent or creating re-entrant execution.
 

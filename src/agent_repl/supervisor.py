@@ -172,6 +172,16 @@ class Supervisor:
     def _handle_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
         if kind == "inbox.ack":
             return self.journal.acknowledge(agent, int(payload["message_id"]))
+        if kind == "inbox.handler_failed":
+            self.publish_state(
+                agent,
+                "inbox_error",
+                {"message_id": payload["message_id"], "error": payload["error"]},
+                presenter="error",
+                label="Inbox handler error",
+                priority=100,
+            )
+            return None
         if kind == "observable.publish":
             value = self.publish_state(
                 agent,

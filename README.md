@@ -44,6 +44,19 @@ observable.publish("debug", {"trace": True}, show_by_default=False)
 Only values marked `show_by_default` belong in the quiet default UI; the rest
 remain available to explicit inspection.
 
+An agent may also opt into inbox delivery with normal Python:
+
+```python
+def handle(message):
+    observable.publish("latest_input", {"text": message["text"]})
+    inbox.ack(message["id"])
+
+inbox.on_message(handle)
+```
+
+The handler runs later in the agent kernel, after the user message has already
+been durably appended; it is not an interruption of the user's input action.
+
 Restart is explicit: `supervisor.restart_agent_kernel("agent")` returns both a
 fresh kernel and a report of rehydrated inbox and observable-state entries.
 Ordinary Python variables and imports are intentionally not restored. An inbox

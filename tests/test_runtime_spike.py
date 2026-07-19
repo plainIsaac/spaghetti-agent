@@ -215,6 +215,31 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(inspected.value[1], {"text": "Inspect the project structure.", "message_id": 1})
         self.assertEqual(inspected.value[2], [])
 
+    def test_agent_can_opt_into_later_inbox_event_delivery(self) -> None:
+        journal = InboxJournal()
+        registry = ObservableStateRegistry()
+        self.addCleanup(journal.close)
+        self.addCleanup(registry.close)
+        supervisor = Supervisor(journal, registry)
+        self.addCleanup(supervisor.close)
+        supervisor.create_repl("agent")
+        kernel = supervisor.start_agent_kernel("agent")
+        registration = kernel.evaluate(
+            "def handle(message):\n"
+            "    observable.publish('event_result', {'text': message['text']})\n"
+            "    inbox.ack(message['id'])\n"
+            "inbox.on_message(handle)"
+        )
+        self.assertEqual(registration.status, "ok")
+
+        supervisor.append_user_message("agent", "Please handle this asynchronously.")
+        deadline = time.monotonic() + 1
+        while registry.get("agent", "event_result") is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        self.assertEqual(registry.get("agent", "event_result").value, {"text": "Please handle this asynchronously."})
+        self.assertEqual(journal.pending("agent"), [])
+
     def test_unresponsive_kernel_can_be_recovered_with_durable_messages(self) -> None:
         journal = InboxJournal()
         registry = ObservableStateRegistry()
