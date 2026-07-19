@@ -88,6 +88,19 @@ normal messaging: it is not a collection of special colon commands. The current
 single-agent CLI is a temporary developer harness and must not define the final
 interaction model.
 
+The first user-REPL capability surface is deliberately small:
+
+```python
+presentable.list()
+presentable["progress"]
+agent.inbox.pending()
+agent.send("Use Postgres, not SQLite.")
+```
+
+The user REPL has its own persistent namespace. These objects are supervisor-
+mediated capabilities, rather than direct references to the agent's Python
+objects.
+
 The agent receives the registry as an explicit capability, not as a direct
 reference to supervisor internals. Its initial API is intentionally small:
 `observable.publish(name, value, presenter="json")`. Likewise, the agent can

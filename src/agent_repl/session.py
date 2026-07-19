@@ -31,6 +31,7 @@ class SingleAgentSession:
         self.agent = agent
         self.supervisor.create_repl(agent)
         self.kernel = self.supervisor.start_agent_kernel(agent)
+        self.user_kernel = self.supervisor.start_user_kernel(agent=agent)
 
     @classmethod
     def open(cls, inbox_path: str = ":memory:", observable_state_path: str = ":memory:", agent: str = "agent") -> "SingleAgentSession":
@@ -44,6 +45,10 @@ class SingleAgentSession:
 
     def evaluate(self, source: str, timeout: float = 2) -> KernelResult:
         return self.kernel.evaluate(source, timeout)
+
+    def user_evaluate(self, source: str, timeout: float = 2) -> KernelResult:
+        """Run Python in the user's persistent REPL for inspection/intervention."""
+        return self.user_kernel.evaluate(source, timeout)
 
     def observe(self) -> list[ObservableValue]:
         return self.supervisor.observable_state.list(self.agent)

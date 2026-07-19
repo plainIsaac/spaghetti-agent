@@ -68,7 +68,48 @@ class User:
         self.inbox = UserInbox(call_supervisor)
 
 
-def _kernel_main(commands: Queue[Any], responses: Queue[Any], capability_requests: Queue[Any], capability_responses: Queue[Any]) -> None:
+class PresentableState:
+    """Read-only presentable state granted to the user's REPL."""
+
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def list(self) -> dict[str, Any]:
+        return self._call_supervisor("presentable.list", {})
+
+    def __getitem__(self, name: str) -> Any:
+        entry = self._call_supervisor("presentable.get", {"name": name})
+        if entry is None:
+            raise KeyError(name)
+        return entry["value"]
+
+
+class AgentInbox:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def pending(self) -> list[dict[str, Any]]:
+        return self._call_supervisor("agent_inbox.pending", {})
+
+
+class Agent:
+    """The user REPL's intentionally narrow capability for one agent."""
+
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+        self.inbox = AgentInbox(call_supervisor)
+
+    def send(self, text: str) -> dict[str, Any]:
+        return self._call_supervisor("agent_inbox.add", {"text": text})
+
+
+def _kernel_main(
+    commands: Queue[Any],
+    responses: Queue[Any],
+    capability_requests: Queue[Any],
+    capability_responses: Queue[Any],
+    role: str,
+) -> None:
     next_capability_request_id = 0
 
     def call_supervisor(kind: str, payload: dict[str, Any]) -> Any:
@@ -85,12 +126,15 @@ def _kernel_main(commands: Queue[Any], responses: Queue[Any], capability_request
             return response["value"]
 
     inbox = KernelInbox(call_supervisor)
-    namespace: dict[str, Any] = {
-        "__name__": "__agent_repl_kernel__",
-        "inbox": inbox,
-        "observable": Observable(call_supervisor),
-        "user": User(call_supervisor),
-    }
+    namespace: dict[str, Any] = {"__name__": "__agent_repl_kernel__", "inbox": inbox}
+    if role == "agent":
+        namespace["observable"] = Observable(call_supervisor)
+        namespace["user"] = User(call_supervisor)
+    elif role == "user":
+        namespace["presentable"] = PresentableState(call_supervisor)
+        namespace["agent"] = Agent(call_supervisor)
+    else:
+        raise ValueError(f"Unknown kernel role: {role}")
     while True:
         command = commands.get()
         kind = command["kind"]
@@ -125,17 +169,18 @@ class PersistentKernel:
     durable event source, not an asynchronous interruption of Python code.
     """
 
-    def __init__(self, name: str, capability_handler: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, name: str, capability_handler: Callable[[str, dict[str, Any]], Any], role: str = "agent") -> None:
         context = get_context("spawn")
         self.name = name
+        self.role = role
         self._commands: Queue[Any] = context.Queue()
         self._responses: Queue[Any] = context.Queue()
         self._capability_requests: Queue[Any] = context.Queue()
         self._capability_responses: Queue[Any] = context.Queue()
         self._process = context.Process(
             target=_kernel_main,
-            args=(self._commands, self._responses, self._capability_requests, self._capability_responses),
-            name=f"agent:{name}",
+            args=(self._commands, self._responses, self._capability_requests, self._capability_responses, role),
+            name=f"{role}:{name}",
         )
         self._capability_handler = capability_handler
         self._serving_capabilities = threading.Event()

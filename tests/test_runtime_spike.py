@@ -181,6 +181,23 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(session.user_messages()[0].text, "Received your message and recorded it in observable state.")
         self.assertEqual(session.restart().restored_inbox_messages, 0)
 
+    def test_user_repl_can_inspect_presentable_state_and_message_the_agent(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        sent = session.user_evaluate("_result = agent.send('Inspect the project structure.')")
+        self.assertEqual(sent.status, "ok")
+        self.assertEqual(sent.value, {"id": 1, "sender": "user", "text": "Inspect the project structure."})
+        self.assertEqual(session.run_demo_turn(), 1)
+
+        inspected = session.user_evaluate(
+            "_result = (presentable.list(), presentable['latest_input'], agent.inbox.pending())"
+        )
+        self.assertEqual(inspected.status, "ok")
+        self.assertEqual(inspected.value[0], {"latest_input": {"text": "Inspect the project structure.", "message_id": 1}})
+        self.assertEqual(inspected.value[1], {"text": "Inspect the project structure.", "message_id": 1})
+        self.assertEqual(inspected.value[2], [])
+
 
 if __name__ == "__main__":
     unittest.main()

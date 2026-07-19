@@ -61,6 +61,11 @@ presentable state continuously, reserve ordinary input for natural-language
 messages, and provide a separate Python user REPL for specific inspection and
 intervention.
 
+The runtime now exposes that user-REPL distinction through
+`session.user_evaluate(...)`. Its first capabilities are
+`presentable.list()`, `presentable["name"]`, `agent.inbox.pending()`, and
+`agent.send(text)`.
+
 Run the tests from this directory:
 
 ```powershell

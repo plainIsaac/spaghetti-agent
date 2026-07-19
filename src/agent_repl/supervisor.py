@@ -94,6 +94,23 @@ class Supervisor:
         self._kernels[agent] = kernel
         return kernel
 
+    def start_user_kernel(self, user: str = "user", agent: str = "agent") -> PersistentKernel:
+        """Start the user's persistent Python REPL with explicit read/write capabilities."""
+        if user in self._kernels:
+            raise ValueError(f"User kernel already exists: {user}")
+        if user not in self._repls:
+            self.create_repl(user)
+        kernel = PersistentKernel(
+            user,
+            lambda kind, payload: self._handle_user_capability(user, agent, kind, payload),
+            role="user",
+        )
+        kernel.start()
+        for message in self.journal.pending(user):
+            kernel.deliver(message)
+        self._kernels[user] = kernel
+        return kernel
+
     def restart_agent_kernel(self, agent: str) -> tuple[PersistentKernel, RestartReport]:
         """Replace a kernel and explicitly report the durable state rehydrated."""
         existing = self._kernels.pop(agent, None)
@@ -117,8 +134,30 @@ class Supervisor:
             return {"name": value.name, "revision": value.revision, "presenter": value.presenter}
         if kind == "user_inbox.add":
             message = self.journal.append(recipient="user", sender=agent, text=str(payload["text"]))
+            user_kernel = self._kernels.get("user")
+            if user_kernel is not None:
+                user_kernel.deliver(message)
             return {"id": message.id, "recipient": message.recipient}
         raise ValueError(f"Capability is not granted: {kind}")
+
+    def _handle_user_capability(self, user: str, agent: str, kind: str, payload: dict[str, Any]) -> Any:
+        if kind == "presentable.list":
+            return {value.name: value.value for value in self.observable_state.list(agent)}
+        if kind == "presentable.get":
+            value = self.observable_state.get(agent, str(payload["name"]))
+            if value is None:
+                return None
+            return {"value": value.value, "revision": value.revision, "presenter": value.presenter}
+        if kind == "agent_inbox.pending":
+            return [self._message_data(message) for message in self.journal.pending(agent)]
+        if kind == "agent_inbox.add":
+            message = self.append_user_message(agent, str(payload["text"]))
+            return self._message_data(message)
+        raise ValueError(f"Capability is not granted: {kind}")
+
+    @staticmethod
+    def _message_data(message: Message) -> dict[str, Any]:
+        return {"id": message.id, "sender": message.sender, "text": message.text}
 
     def append_user_message(self, agent: str, text: str) -> Message:
         """Durably append first; any handler runs later in the agent REPL."""
