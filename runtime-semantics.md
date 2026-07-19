@@ -75,6 +75,13 @@ first registry representation is durable JSON plus presenter metadata. Richer
 inspectors and adapters can be added later without making arbitrary object
 serialization or `repr` part of the runtime contract.
 
+The agent receives the registry as an explicit capability, not as a direct
+reference to supervisor internals. Its initial API is intentionally small:
+`observable.publish(name, value, presenter="json")`. Likewise, the agent can
+acknowledge durable inbox entries with `inbox.ack(message_id)` and communicate
+intentionally through `user.inbox.add(text)`. These are supervisor-mediated
+requests with ownership checked by the supervisor.
+
 High-level collaboration helpers and a granular runtime API are complementary.
 The latter must expose the machinery needed for agents to build their own
 caches, scheduling, memory, messaging, synchronization, and workflows.

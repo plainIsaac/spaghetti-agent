@@ -72,17 +72,21 @@ class InboxJournal:
             ).fetchall()
         return [self._to_message(row) for row in rows]
 
-    def acknowledge(self, message_id: int) -> None:
+    def acknowledge(self, recipient: str, message_id: int) -> bool:
+        """Acknowledge a message only from its intended recipient."""
         consumed_at = datetime.now(UTC).isoformat()
         with self._lock, self._connection:
-            self._connection.execute(
-                "UPDATE inbox_messages SET consumed_at = ? WHERE id = ?",
-                (consumed_at, message_id),
+            cursor = self._connection.execute(
+                "UPDATE inbox_messages SET consumed_at = ? WHERE id = ? AND recipient = ? AND consumed_at IS NULL",
+                (consumed_at, message_id, recipient),
             )
+            if cursor.rowcount != 1:
+                return False
             self._connection.execute(
                 "INSERT INTO events (kind, subject, created_at) VALUES (?, ?, ?)",
                 ("inbox.message_acknowledged", str(message_id), consumed_at),
             )
+        return True
 
     def event_kinds(self) -> list[str]:
         with self._lock:

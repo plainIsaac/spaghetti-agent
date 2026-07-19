@@ -53,6 +53,7 @@ class Supervisor:
 
     def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None) -> None:
         self.journal = journal
+        self._owns_observable_state = observable_state is None
         self.observable_state = observable_state or ObservableStateRegistry()
         self._repls: dict[str, ReplQueue] = {}
         self._handlers: dict[str, Callable[[Message], None]] = {}
@@ -75,7 +76,7 @@ class Supervisor:
         """Start a persistent agent namespace and hydrate its pending inbox."""
         if agent in self._kernels:
             raise ValueError(f"Agent kernel already exists: {agent}")
-        kernel = PersistentKernel(agent)
+        kernel = PersistentKernel(agent, lambda kind, payload: self._handle_kernel_capability(agent, kind, payload))
         kernel.start()
         for message in self.journal.pending(agent):
             kernel.deliver(message)
@@ -84,6 +85,17 @@ class Supervisor:
 
     def publish_state(self, owner: str, name: str, value: Any, presenter: str = "json") -> ObservableValue:
         return self.observable_state.publish(owner, name, value, presenter)
+
+    def _handle_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
+        if kind == "inbox.ack":
+            return self.journal.acknowledge(agent, int(payload["message_id"]))
+        if kind == "observable.publish":
+            value = self.publish_state(agent, str(payload["name"]), payload["value"], str(payload["presenter"]))
+            return {"name": value.name, "revision": value.revision, "presenter": value.presenter}
+        if kind == "user_inbox.add":
+            message = self.journal.append(recipient="user", sender=agent, text=str(payload["text"]))
+            return {"id": message.id, "recipient": message.recipient}
+        raise ValueError(f"Capability is not granted: {kind}")
 
     def append_user_message(self, agent: str, text: str) -> Message:
         """Durably append first; any handler runs later in the agent REPL."""
@@ -98,10 +110,12 @@ class Supervisor:
 
     def _deliver(self, message: Message, handler: Callable[[Message], None]) -> None:
         handler(message)
-        self.journal.acknowledge(message.id)
+        self.journal.acknowledge(message.recipient, message.id)
 
     def close(self) -> None:
         for kernel in self._kernels.values():
             kernel.stop()
         for repl in self._repls.values():
             repl.close()
+        if self._owns_observable_state:
+            self.observable_state.close()

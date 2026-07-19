@@ -113,6 +113,33 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual((first.revision, second.revision), (1, 2))
         self.assertEqual(registry.get("agent", "progress").value, {"phase": "build", "percent": 30})
 
+    def test_kernel_capabilities_publish_acknowledge_and_message_the_user(self) -> None:
+        journal = InboxJournal()
+        registry = ObservableStateRegistry()
+        self.addCleanup(journal.close)
+        self.addCleanup(registry.close)
+        supervisor = Supervisor(journal, registry)
+        self.addCleanup(supervisor.close)
+        supervisor.create_repl("agent")
+        supervisor.append_user_message("agent", "Please investigate the runtime.")
+        kernel = supervisor.start_agent_kernel("agent")
+
+        result = kernel.evaluate(
+            "message = inbox.pending()[0]\n"
+            "published = observable.publish('status', {'phase': 'investigating'})\n"
+            "acknowledged = inbox.ack(message['id'])\n"
+            "sent = user.inbox.add('I have started investigating.')\n"
+            "_result = (published, acknowledged, sent)"
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value[0], {"name": "status", "revision": 1, "presenter": "json"})
+        self.assertTrue(result.value[1])
+        self.assertEqual(result.value[2], {"id": 2, "recipient": "user"})
+        self.assertEqual(registry.get("agent", "status").value, {"phase": "investigating"})
+        self.assertEqual(journal.pending("agent"), [])
+        self.assertEqual(journal.pending("user")[0].text, "I have started investigating.")
+
 
 if __name__ == "__main__":
     unittest.main()

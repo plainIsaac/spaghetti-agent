@@ -20,6 +20,18 @@ inbox and delivered into the kernel's `inbox` value. The registry stores only
 explicitly published JSON-presentable values, so it is an inspection contract
 rather than a dump of every local variable.
 
+The kernel is granted three intuitive supervisor capabilities:
+
+```python
+observable.publish("progress", {"percent": 30})
+inbox.ack(message_id)
+user.inbox.add("I need a decision about the database.")
+```
+
+They are RPC requests, not shared object references. The supervisor checks the
+agent's ownership when acknowledging a message and remains the durable source
+of truth.
+
 Run the tests from this directory:
 
 ```powershell
