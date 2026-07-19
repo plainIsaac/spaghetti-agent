@@ -145,6 +145,11 @@ The initial working model is:
 - Work that may not yield must have a cancellable isolation boundary. Python
   threads alone are insufficient for reliable termination of arbitrary code;
   process-level containment is the baseline hypothesis to test.
+- The supervisor publishes a compact `runtime` presentable value for each agent
+  kernel. It reports evaluation health (`idle`, `running`, `completed`,
+  `failed`, `unresponsive`, or `terminated`) without requiring the user to
+  inspect raw logs. A timed-out kernel can be force-terminated and restarted;
+  the normal durable recovery contract then applies.
 - The supervisor owns child-process lifecycle so cancellation does not leave
   orphaned commands or services.
 - Imports are executable, stateful work. REPLs need isolated/tracked module

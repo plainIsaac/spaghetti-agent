@@ -164,7 +164,7 @@ class RuntimeSpikeTests(unittest.TestCase):
 
         self.assertEqual(report.agent, "agent")
         self.assertEqual(report.restored_inbox_messages, 1)
-        self.assertEqual(report.restored_observable_values, 1)
+        self.assertEqual(report.restored_observable_values, 2)
         self.assertTrue(report.lost_ephemeral_kernel_state)
         self.assertEqual(restored.value[0], None)
         self.assertEqual(restored.value[1], [{"id": 1, "sender": "user", "text": "Continue after restart."}])
@@ -194,9 +194,34 @@ class RuntimeSpikeTests(unittest.TestCase):
             "_result = (presentable.list(), presentable['latest_input'], agent.inbox.pending())"
         )
         self.assertEqual(inspected.status, "ok")
-        self.assertEqual(inspected.value[0], {"latest_input": {"text": "Inspect the project structure.", "message_id": 1}})
+        self.assertEqual(inspected.value[0]["latest_input"], {"text": "Inspect the project structure.", "message_id": 1})
+        self.assertEqual(inspected.value[0]["runtime"]["status"], "completed")
         self.assertEqual(inspected.value[1], {"text": "Inspect the project structure.", "message_id": 1})
         self.assertEqual(inspected.value[2], [])
+
+    def test_unresponsive_kernel_can_be_recovered_with_durable_messages(self) -> None:
+        journal = InboxJournal()
+        registry = ObservableStateRegistry()
+        self.addCleanup(journal.close)
+        self.addCleanup(registry.close)
+        supervisor = Supervisor(journal, registry)
+        self.addCleanup(supervisor.close)
+        supervisor.create_repl("agent")
+        kernel = supervisor.start_agent_kernel("agent")
+
+        with self.assertRaises(TimeoutError):
+            kernel.evaluate("while True:\n    pass", timeout=0.1)
+        self.assertEqual(registry.get("agent", "runtime").value["status"], "unresponsive")
+        supervisor.append_user_message("agent", "Resume with a safe approach.")
+
+        recovered, report = supervisor.recover_agent_kernel("agent")
+        self.assertTrue(report.forced_termination)
+        self.assertEqual(report.restored_inbox_messages, 1)
+        self.assertEqual(registry.get("agent", "runtime").value, {"status": "idle"})
+        self.assertEqual(
+            recovered.evaluate("_result = inbox.pending()").value,
+            [{"id": 1, "sender": "user", "text": "Resume with a safe approach."}],
+        )
 
 
 if __name__ == "__main__":

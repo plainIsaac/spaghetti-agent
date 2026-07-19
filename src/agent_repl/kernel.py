@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from multiprocessing import get_context
 from multiprocessing.queues import Queue
 import queue
@@ -16,6 +17,15 @@ from .journal import Message
 class KernelResult:
     status: str
     value: Any = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ExecutionState:
+    request_id: int | None
+    status: str
+    started_at: datetime | None
+    finished_at: datetime | None = None
     error: str | None = None
 
 
@@ -169,7 +179,13 @@ class PersistentKernel:
     durable event source, not an asynchronous interruption of Python code.
     """
 
-    def __init__(self, name: str, capability_handler: Callable[[str, dict[str, Any]], Any], role: str = "agent") -> None:
+    def __init__(
+        self,
+        name: str,
+        capability_handler: Callable[[str, dict[str, Any]], Any],
+        role: str = "agent",
+        execution_observer: Callable[[ExecutionState], None] | None = None,
+    ) -> None:
         context = get_context("spawn")
         self.name = name
         self.role = role
@@ -183,10 +199,12 @@ class PersistentKernel:
             name=f"{role}:{name}",
         )
         self._capability_handler = capability_handler
+        self._execution_observer = execution_observer
         self._serving_capabilities = threading.Event()
         self._capability_thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._next_request_id = 0
+        self._execution = ExecutionState(None, "idle", None)
 
     def start(self) -> None:
         self._process.start()
@@ -230,14 +248,25 @@ class PersistentKernel:
                 raise RuntimeError("Kernel is not running")
             self._next_request_id += 1
             request_id = self._next_request_id
+            started_at = datetime.now(UTC)
+            self._set_execution(ExecutionState(request_id, "running", started_at))
             self._commands.put({"kind": "evaluate", "request_id": request_id, "source": source})
             try:
                 response = self._responses.get(timeout=timeout)
             except queue.Empty as error:
+                self._set_execution(ExecutionState(request_id, "unresponsive", started_at, error="evaluation timed out"))
                 raise TimeoutError("Evaluation did not yield a result") from error
         if response["request_id"] != request_id:
             raise RuntimeError("Received a response for another evaluation")
-        return KernelResult(response["status"], response.get("value"), response.get("error"))
+        result = KernelResult(response["status"], response.get("value"), response.get("error"))
+        status = "completed" if result.status == "ok" else "failed"
+        self._set_execution(ExecutionState(request_id, status, started_at, datetime.now(UTC), result.error))
+        return result
+
+    def _set_execution(self, state: ExecutionState) -> None:
+        self._execution = state
+        if self._execution_observer is not None:
+            self._execution_observer(state)
 
     def stop(self) -> None:
         self._serving_capabilities.clear()
@@ -249,6 +278,30 @@ class PersistentKernel:
             self._process.join(timeout=1)
         if self._capability_thread is not None:
             self._capability_thread.join(timeout=1)
+
+    def terminate(self) -> bool:
+        """Immediately stop a wedged kernel; durable state is recovered by its supervisor."""
+        was_alive = self._process.is_alive()
+        self._serving_capabilities.clear()
+        if was_alive:
+            self._process.terminate()
+            self._process.join(timeout=1)
+        if self._capability_thread is not None:
+            self._capability_thread.join(timeout=1)
+        self._set_execution(
+            ExecutionState(
+                self._execution.request_id,
+                "terminated",
+                self._execution.started_at,
+                datetime.now(UTC),
+                "kernel terminated by supervisor",
+            )
+        )
+        return was_alive
+
+    @property
+    def execution(self) -> ExecutionState:
+        return self._execution
 
     @property
     def alive(self) -> bool:

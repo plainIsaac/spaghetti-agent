@@ -10,7 +10,7 @@ import threading
 from typing import Any
 
 from .journal import InboxJournal, Message
-from .kernel import PersistentKernel
+from .kernel import ExecutionState, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
 
 
@@ -25,6 +25,7 @@ class RestartReport:
     restored_inbox_messages: int
     restored_observable_values: int
     lost_ephemeral_kernel_state: bool = True
+    forced_termination: bool = False
 
 
 class ReplQueue:
@@ -87,11 +88,16 @@ class Supervisor:
         """Start a persistent agent namespace and hydrate its pending inbox."""
         if agent in self._kernels:
             raise ValueError(f"Agent kernel already exists: {agent}")
-        kernel = PersistentKernel(agent, lambda kind, payload: self._handle_kernel_capability(agent, kind, payload))
+        kernel = PersistentKernel(
+            agent,
+            lambda kind, payload: self._handle_kernel_capability(agent, kind, payload),
+            execution_observer=lambda state: self._publish_execution_state(agent, state),
+        )
         kernel.start()
         for message in self.journal.pending(agent):
             kernel.deliver(message)
         self._kernels[agent] = kernel
+        self.publish_state(agent, "runtime", {"status": "idle"}, presenter="runtime")
         return kernel
 
     def start_user_kernel(self, user: str = "user", agent: str = "agent") -> PersistentKernel:
@@ -123,8 +129,36 @@ class Supervisor:
         )
         return self.start_agent_kernel(agent), report
 
+    def recover_agent_kernel(self, agent: str) -> tuple[PersistentKernel, RestartReport]:
+        """Force-stop an unresponsive agent kernel and rehydrate durable state."""
+        existing = self._kernels.pop(agent, None)
+        if existing is None:
+            raise KeyError(f"No running agent kernel: {agent}")
+        existing.terminate()
+        report = RestartReport(
+            agent=agent,
+            restored_inbox_messages=len(self.journal.pending(agent)),
+            restored_observable_values=len(self.observable_state.list(agent)),
+            forced_termination=True,
+        )
+        return self.start_agent_kernel(agent), report
+
     def publish_state(self, owner: str, name: str, value: Any, presenter: str = "json") -> ObservableValue:
         return self.observable_state.publish(owner, name, value, presenter)
+
+    def _publish_execution_state(self, agent: str, state: ExecutionState) -> None:
+        self.publish_state(
+            agent,
+            "runtime",
+            {
+                "status": state.status,
+                "request_id": state.request_id,
+                "started_at": state.started_at.isoformat() if state.started_at else None,
+                "finished_at": state.finished_at.isoformat() if state.finished_at else None,
+                "error": state.error,
+            },
+            presenter="runtime",
+        )
 
     def _handle_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
         if kind == "inbox.ack":

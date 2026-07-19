@@ -38,6 +38,11 @@ Ordinary Python variables and imports are intentionally not restored. An inbox
 message remains eligible for delivery until `inbox.ack(id)` succeeds, giving the
 current spike at-least-once delivery semantics.
 
+The supervisor also publishes a compact `runtime` presentable value with the
+kernel's evaluation health. If an evaluation stops yielding, the supervisor can
+use `recover_agent_kernel("agent")` to terminate and replace the kernel; durable
+inbox and observable state are then rehydrated as usual.
+
 ## Single-agent session
 
 The current vertical slice is deliberately one agent. It accepts ordinary user
