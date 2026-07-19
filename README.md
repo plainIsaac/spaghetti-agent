@@ -13,6 +13,13 @@ It currently proves four narrow claims:
 - arbitrary non-yielding code can be terminated at a process boundary, and
   dynamically imported code works in that isolated boundary.
 
+The second spike adds a persistent process-backed agent kernel and a supervisor
+observable-state registry. Kernel evaluations retain ordinary Python variables
+and imports between evaluations; user messages are hydrated from the durable
+inbox and delivered into the kernel's `inbox` value. The registry stores only
+explicitly published JSON-presentable values, so it is an inspection contract
+rather than a dump of every local variable.
+
 Run the tests from this directory:
 
 ```powershell

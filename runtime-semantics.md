@@ -68,6 +68,13 @@ inspectors for common runtime concepts, but must also support bounded, lazy,
 adapter-based inspection of arbitrary values. Inspection must not accidentally
 invoke expensive or side-effectful properties, representations, or iterators.
 
+The supervisor also owns an explicit observable-state registry. Agents and users
+can publish selected, presentable values to it; this is a declaration that state
+is intended for inspection, not a claim that all REPL locals are UI state. The
+first registry representation is durable JSON plus presenter metadata. Richer
+inspectors and adapters can be added later without making arbitrary object
+serialization or `repr` part of the runtime contract.
+
 High-level collaboration helpers and a granular runtime API are complementary.
 The latter must expose the machinery needed for agents to build their own
 caches, scheduling, memory, messaging, synchronization, and workflows.

@@ -2,6 +2,17 @@
 
 from .isolation import IsolatedExecution
 from .journal import InboxJournal, Message
+from .kernel import KernelResult, PersistentKernel
+from .observable_state import ObservableStateRegistry, ObservableValue
 from .supervisor import Supervisor
 
-__all__ = ["InboxJournal", "IsolatedExecution", "Message", "Supervisor"]
+__all__ = [
+    "InboxJournal",
+    "IsolatedExecution",
+    "KernelResult",
+    "Message",
+    "ObservableStateRegistry",
+    "ObservableValue",
+    "PersistentKernel",
+    "Supervisor",
+]

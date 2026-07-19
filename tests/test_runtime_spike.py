@@ -5,7 +5,7 @@ import threading
 import time
 import unittest
 
-from agent_repl import InboxJournal, IsolatedExecution, Supervisor
+from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, Supervisor
 
 
 class RuntimeSpikeTests(unittest.TestCase):
@@ -87,6 +87,31 @@ class RuntimeSpikeTests(unittest.TestCase):
         time.sleep(0.05)
         runaway.cancel()
         self.assertFalse(runaway.alive)
+
+    def test_persistent_kernel_keeps_state_and_receives_durable_messages(self) -> None:
+        journal = InboxJournal()
+        self.addCleanup(journal.close)
+        supervisor = Supervisor(journal)
+        self.addCleanup(supervisor.close)
+        supervisor.create_repl("agent")
+        supervisor.append_user_message("agent", "Use Postgres.")
+        kernel = supervisor.start_agent_kernel("agent")
+
+        self.assertEqual(kernel.evaluate("answer = 40 + 2").status, "ok")
+        self.assertEqual(kernel.evaluate("_result = answer").value, 42)
+        self.assertEqual(kernel.evaluate("_result = inbox.pending()").value, [{"id": 1, "sender": "user", "text": "Use Postgres."}])
+
+    def test_observable_state_is_explicit_and_revisioned(self) -> None:
+        registry = ObservableStateRegistry()
+        self.addCleanup(registry.close)
+        supervisor = Supervisor(InboxJournal(), registry)
+        self.addCleanup(supervisor.close)
+        self.addCleanup(supervisor.journal.close)
+
+        first = supervisor.publish_state("agent", "progress", {"phase": "research", "percent": 10})
+        second = supervisor.publish_state("agent", "progress", {"phase": "build", "percent": 30})
+        self.assertEqual((first.revision, second.revision), (1, 2))
+        self.assertEqual(registry.get("agent", "progress").value, {"phase": "build", "percent": 30})
 
 
 if __name__ == "__main__":
