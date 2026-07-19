@@ -82,9 +82,10 @@ python -m agent_repl --demo
 
 Type normal text to queue it for the agent. `--demo` runs a deterministic agent
 turn after each message so the full flow is visible without connecting an LLM.
-Use `:state`, `:messages`, `:restart`, `:eval <source>`, and `:quit` to inspect
-the session. A real model adapter belongs at the `evaluate` boundary; it should
-not alter the runtime's message or persistence semantics.
+The compact default presentation renders before each prompt. Use `:python` to
+enter the user Python REPL, `:restart` to exercise recovery, or `:quit` to exit.
+A real model adapter belongs at the `evaluate` boundary; it should not alter the
+runtime's message or persistence semantics.
 
 These commands are developer-harness controls only. The intended UI will render
 presentable state continuously, reserve ordinary input for natural-language

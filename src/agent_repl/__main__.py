@@ -15,6 +15,28 @@ def _format_state(session: SingleAgentSession) -> str:
     return "\n".join(f"{value.label or value.name}: {value.value}" for value in values)
 
 
+def _render_default_presentation(session: SingleAgentSession, seen_message_ids: set[int]) -> None:
+    print(_format_state(session))
+    for message in session.user_messages():
+        if message.id not in seen_message_ids:
+            print(f"agent> {message.text}")
+            seen_message_ids.add(message.id)
+
+
+def _run_user_repl(session: SingleAgentSession) -> None:
+    print("Python inspection mode. Enter one Python statement/block per line; :back returns to messages.")
+    while True:
+        source = input("py> ")
+        if source.strip() == ":back":
+            return
+        result = session.user_evaluate(source)
+        if result.status == "ok":
+            if result.value is not None:
+                print(result.value)
+        else:
+            print(result.error)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Agent REPL single-agent session")
     parser.add_argument("--data-dir", type=Path, default=Path(".agent-repl"), help="Directory for durable session state")
@@ -25,26 +47,21 @@ def main() -> None:
         str(arguments.data_dir / "inbox.sqlite"),
         str(arguments.data_dir / "observable-state.sqlite"),
     )
-    print("Agent REPL. Enter a message, or use :state, :messages, :restart, :eval <source>, :quit.")
+    print("Agent REPL. Enter a message. Use :python for user Python, :restart, or :quit.")
+    seen_message_ids: set[int] = set()
     try:
         while True:
+            _render_default_presentation(session, seen_message_ids)
             line = input("you> ").strip()
             if not line:
                 continue
             if line == ":quit":
                 return
-            if line == ":state":
-                print(_format_state(session))
-                continue
-            if line == ":messages":
-                messages = session.user_messages()
-                print("\n".join(message.text for message in messages) or "No agent messages.")
+            if line == ":python":
+                _run_user_repl(session)
                 continue
             if line == ":restart":
                 print(session.restart())
-                continue
-            if line.startswith(":eval "):
-                print(session.evaluate(line.removeprefix(":eval ")))
                 continue
 
             session.send(line)
