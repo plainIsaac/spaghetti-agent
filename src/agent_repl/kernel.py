@@ -56,10 +56,25 @@ class Observable:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
         self._call_supervisor = call_supervisor
 
-    def publish(self, name: str, value: Any, presenter: str = "json") -> dict[str, Any]:
+    def publish(
+        self,
+        name: str,
+        value: Any,
+        presenter: str = "json",
+        show_by_default: bool = True,
+        label: str | None = None,
+        priority: int = 0,
+    ) -> dict[str, Any]:
         return self._call_supervisor(
             "observable.publish",
-            {"name": name, "value": value, "presenter": presenter},
+            {
+                "name": name,
+                "value": value,
+                "presenter": presenter,
+                "show_by_default": show_by_default,
+                "label": label,
+                "priority": priority,
+            },
         )
 
 

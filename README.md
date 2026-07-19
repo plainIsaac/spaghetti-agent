@@ -32,6 +32,18 @@ They are RPC requests, not shared object references. The supervisor checks the
 agent's ownership when acknowledging a message and remains the durable source
 of truth.
 
+Published state can also describe its default presentation:
+
+```python
+observable.publish(
+    "progress", {"percent": 30}, label="Current work", priority=10
+)
+observable.publish("debug", {"trace": True}, show_by_default=False)
+```
+
+Only values marked `show_by_default` belong in the quiet default UI; the rest
+remain available to explicit inspection.
+
 Restart is explicit: `supervisor.restart_agent_kernel("agent")` returns both a
 fresh kernel and a report of rehydrated inbox and observable-state entries.
 Ordinary Python variables and imports are intentionally not restored. An inbox

@@ -113,6 +113,22 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual((first.revision, second.revision), (1, 2))
         self.assertEqual(registry.get("agent", "progress").value, {"phase": "build", "percent": 30})
 
+    def test_only_selected_presentable_state_is_shown_by_default(self) -> None:
+        registry = ObservableStateRegistry()
+        self.addCleanup(registry.close)
+        registry.publish("agent", "debug", {"trace": True}, show_by_default=False)
+        visible = registry.publish(
+            "agent",
+            "summary",
+            {"phase": "working"},
+            label="Current work",
+            priority=10,
+        )
+
+        self.assertEqual(registry.list("agent", default_only=True), [visible])
+        self.assertEqual(visible.label, "Current work")
+        self.assertEqual(visible.priority, 10)
+
     def test_kernel_capabilities_publish_acknowledge_and_message_the_user(self) -> None:
         journal = InboxJournal()
         registry = ObservableStateRegistry()

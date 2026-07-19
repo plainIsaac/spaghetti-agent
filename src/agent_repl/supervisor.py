@@ -143,8 +143,17 @@ class Supervisor:
         )
         return self.start_agent_kernel(agent), report
 
-    def publish_state(self, owner: str, name: str, value: Any, presenter: str = "json") -> ObservableValue:
-        return self.observable_state.publish(owner, name, value, presenter)
+    def publish_state(
+        self,
+        owner: str,
+        name: str,
+        value: Any,
+        presenter: str = "json",
+        show_by_default: bool = True,
+        label: str | None = None,
+        priority: int = 0,
+    ) -> ObservableValue:
+        return self.observable_state.publish(owner, name, value, presenter, show_by_default, label, priority)
 
     def _publish_execution_state(self, agent: str, state: ExecutionState) -> None:
         self.publish_state(
@@ -164,7 +173,15 @@ class Supervisor:
         if kind == "inbox.ack":
             return self.journal.acknowledge(agent, int(payload["message_id"]))
         if kind == "observable.publish":
-            value = self.publish_state(agent, str(payload["name"]), payload["value"], str(payload["presenter"]))
+            value = self.publish_state(
+                agent,
+                str(payload["name"]),
+                payload["value"],
+                str(payload["presenter"]),
+                bool(payload["show_by_default"]),
+                payload["label"],
+                int(payload["priority"]),
+            )
             return {"name": value.name, "revision": value.revision, "presenter": value.presenter}
         if kind == "user_inbox.add":
             message = self.journal.append(recipient="user", sender=agent, text=str(payload["text"]))
@@ -176,7 +193,7 @@ class Supervisor:
 
     def _handle_user_capability(self, user: str, agent: str, kind: str, payload: dict[str, Any]) -> Any:
         if kind == "presentable.list":
-            return {value.name: value.value for value in self.observable_state.list(agent)}
+            return {value.name: value.value for value in self.observable_state.list(agent, default_only=True)}
         if kind == "presentable.get":
             value = self.observable_state.get(agent, str(payload["name"]))
             if value is None:

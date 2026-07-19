@@ -75,6 +75,11 @@ first registry representation is durable JSON plus presenter metadata. Richer
 inspectors and adapters can be added later without making arbitrary object
 serialization or `repr` part of the runtime contract.
 
+Each published value also declares whether it is shown by default, an optional
+human label, and a priority. The default presentation renders only that selected
+subset, ordered by priority. Other published values remain available to an
+appropriate inspector without turning the default UI into a state dump.
+
 ### Intended user interface
 
 The UI should render a compact, live subset of presentable state by default.

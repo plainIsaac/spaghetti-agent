@@ -9,10 +9,10 @@ from .session import SingleAgentSession
 
 
 def _format_state(session: SingleAgentSession) -> str:
-    values = session.observe()
+    values = [value for value in session.observe() if value.show_by_default]
     if not values:
         return "No observable state has been published."
-    return "\n".join(f"{value.name}@{value.revision}: {value.value}" for value in values)
+    return "\n".join(f"{value.label or value.name}: {value.value}" for value in values)
 
 
 def main() -> None:
