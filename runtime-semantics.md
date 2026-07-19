@@ -109,6 +109,13 @@ The initial working model is:
 - Processes, sockets, generators, native extension state, and similar resources
   are normally ephemeral; they must be recreated or represented by a durable
   handle after restart.
+- A kernel restart rehydrates unacknowledged inbox messages and explicitly
+  published observable values. Its ordinary Python namespace, imports, local
+  variables, and in-memory resources are ephemeral. The supervisor must report
+  this distinction rather than imply that an interpreter heap was restored.
+- Inbox handling is at-least-once until acknowledgement: an unacknowledged
+  message is eligible for re-delivery after a restart. Handlers should therefore
+  make acknowledgement part of their deliberate completion logic.
 - Work that may not yield must have a cancellable isolation boundary. Python
   threads alone are insufficient for reliable termination of arbitrary code;
   process-level containment is the baseline hypothesis to test.

@@ -140,6 +140,36 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(journal.pending("agent"), [])
         self.assertEqual(journal.pending("user")[0].text, "I have started investigating.")
 
+    def test_restart_rehydrates_durable_state_and_reports_lost_kernel_locals(self) -> None:
+        journal = InboxJournal()
+        registry = ObservableStateRegistry()
+        self.addCleanup(journal.close)
+        self.addCleanup(registry.close)
+        supervisor = Supervisor(journal, registry)
+        self.addCleanup(supervisor.close)
+        supervisor.create_repl("agent")
+        kernel = supervisor.start_agent_kernel("agent")
+
+        self.assertEqual(
+            kernel.evaluate(
+                "scratch = 'ephemeral'\n"
+                "observable.publish('progress', {'phase': 'running'})"
+            ).status,
+            "ok",
+        )
+        supervisor.append_user_message("agent", "Continue after restart.")
+
+        restored_kernel, report = supervisor.restart_agent_kernel("agent")
+        restored = restored_kernel.evaluate("_result = (globals().get('scratch'), inbox.pending())")
+
+        self.assertEqual(report.agent, "agent")
+        self.assertEqual(report.restored_inbox_messages, 1)
+        self.assertEqual(report.restored_observable_values, 1)
+        self.assertTrue(report.lost_ephemeral_kernel_state)
+        self.assertEqual(restored.value[0], None)
+        self.assertEqual(restored.value[1], [{"id": 1, "sender": "user", "text": "Continue after restart."}])
+        self.assertEqual(registry.get("agent", "progress").value, {"phase": "running"})
+
 
 if __name__ == "__main__":
     unittest.main()

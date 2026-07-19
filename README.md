@@ -32,6 +32,12 @@ They are RPC requests, not shared object references. The supervisor checks the
 agent's ownership when acknowledging a message and remains the durable source
 of truth.
 
+Restart is explicit: `supervisor.restart_agent_kernel("agent")` returns both a
+fresh kernel and a report of rehydrated inbox and observable-state entries.
+Ordinary Python variables and imports are intentionally not restored. An inbox
+message remains eligible for delivery until `inbox.ack(id)` succeeds, giving the
+current spike at-least-once delivery semantics.
+
 Run the tests from this directory:
 
 ```powershell

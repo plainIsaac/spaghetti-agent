@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import Future
+from dataclasses import dataclass
 import queue
 import threading
 from typing import Any
@@ -14,6 +15,16 @@ from .observable_state import ObservableStateRegistry, ObservableValue
 
 
 _STOP = object()
+
+
+@dataclass(frozen=True)
+class RestartReport:
+    """What a kernel restart restored and what it intentionally did not."""
+
+    agent: str
+    restored_inbox_messages: int
+    restored_observable_values: int
+    lost_ephemeral_kernel_state: bool = True
 
 
 class ReplQueue:
@@ -82,6 +93,18 @@ class Supervisor:
             kernel.deliver(message)
         self._kernels[agent] = kernel
         return kernel
+
+    def restart_agent_kernel(self, agent: str) -> tuple[PersistentKernel, RestartReport]:
+        """Replace a kernel and explicitly report the durable state rehydrated."""
+        existing = self._kernels.pop(agent, None)
+        if existing is not None:
+            existing.stop()
+        report = RestartReport(
+            agent=agent,
+            restored_inbox_messages=len(self.journal.pending(agent)),
+            restored_observable_values=len(self.observable_state.list(agent)),
+        )
+        return self.start_agent_kernel(agent), report
 
     def publish_state(self, owner: str, name: str, value: Any, presenter: str = "json") -> ObservableValue:
         return self.observable_state.publish(owner, name, value, presenter)

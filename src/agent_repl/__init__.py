@@ -4,7 +4,7 @@ from .isolation import IsolatedExecution
 from .journal import InboxJournal, Message
 from .kernel import KernelResult, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
-from .supervisor import Supervisor
+from .supervisor import RestartReport, Supervisor
 
 __all__ = [
     "InboxJournal",
@@ -14,5 +14,6 @@ __all__ = [
     "ObservableStateRegistry",
     "ObservableValue",
     "PersistentKernel",
+    "RestartReport",
     "Supervisor",
 ]
