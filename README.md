@@ -38,6 +38,24 @@ Ordinary Python variables and imports are intentionally not restored. An inbox
 message remains eligible for delivery until `inbox.ack(id)` succeeds, giving the
 current spike at-least-once delivery semantics.
 
+## Single-agent session
+
+The current vertical slice is deliberately one agent. It accepts ordinary user
+messages, exposes only explicitly published observable state, retains concise
+agent messages for the user, and can restart with the documented recovery
+contract. Run it with:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m agent_repl --demo
+```
+
+Type normal text to queue it for the agent. `--demo` runs a deterministic agent
+turn after each message so the full flow is visible without connecting an LLM.
+Use `:state`, `:messages`, `:restart`, `:eval <source>`, and `:quit` to inspect
+the session. A real model adapter belongs at the `evaluate` boundary; it should
+not alter the runtime's message or persistence semantics.
+
 Run the tests from this directory:
 
 ```powershell

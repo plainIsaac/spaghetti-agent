@@ -5,7 +5,7 @@ import threading
 import time
 import unittest
 
-from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, Supervisor
+from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, SingleAgentSession, Supervisor
 
 
 class RuntimeSpikeTests(unittest.TestCase):
@@ -169,6 +169,17 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(restored.value[0], None)
         self.assertEqual(restored.value[1], [{"id": 1, "sender": "user", "text": "Continue after restart."}])
         self.assertEqual(registry.get("agent", "progress").value, {"phase": "running"})
+
+    def test_single_agent_session_exercises_the_user_visible_flow(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        message = session.send("Investigate the runtime.")
+        self.assertEqual(message.sender, "user")
+        self.assertEqual(session.run_demo_turn(), 1)
+        self.assertEqual(session.observe()[0].value, {"text": "Investigate the runtime.", "message_id": 1})
+        self.assertEqual(session.user_messages()[0].text, "Received your message and recorded it in observable state.")
+        self.assertEqual(session.restart().restored_inbox_messages, 0)
 
 
 if __name__ == "__main__":
