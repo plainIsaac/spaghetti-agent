@@ -75,6 +75,19 @@ first registry representation is durable JSON plus presenter metadata. Richer
 inspectors and adapters can be added later without making arbitrary object
 serialization or `repr` part of the runtime contract.
 
+### Intended user interface
+
+The UI should render a compact, live subset of presentable state by default.
+The user should not have to request snapshots or manage the agent through CLI
+commands in order to know the meaningful current state.
+
+Normal user input remains free-form natural-language messaging to the agent.
+For deeper inspection or direct intervention, the user enters actual Python in
+their own REPL, using the capabilities granted there. This is distinct from
+normal messaging: it is not a collection of special colon commands. The current
+single-agent CLI is a temporary developer harness and must not define the final
+interaction model.
+
 The agent receives the registry as an explicit capability, not as a direct
 reference to supervisor internals. Its initial API is intentionally small:
 `observable.publish(name, value, presenter="json")`. Likewise, the agent can

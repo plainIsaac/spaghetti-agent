@@ -56,6 +56,11 @@ Use `:state`, `:messages`, `:restart`, `:eval <source>`, and `:quit` to inspect
 the session. A real model adapter belongs at the `evaluate` boundary; it should
 not alter the runtime's message or persistence semantics.
 
+These commands are developer-harness controls only. The intended UI will render
+presentable state continuously, reserve ordinary input for natural-language
+messages, and provide a separate Python user REPL for specific inspection and
+intervention.
+
 Run the tests from this directory:
 
 ```powershell
