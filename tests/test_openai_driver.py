@@ -157,6 +157,8 @@ class OpenAIDriverTests(unittest.TestCase):
                 self.assertEqual("".join(deltas), f"```python\n{source}```")
                 self.assertTrue(client.responses.calls[0]["stream"])
                 self.assertEqual(session.model_program_log()[0]["raw_output"], "".join(deltas))
+                self.assertEqual([entry["event"] for entry in session.repl_log()], ["model_program", "repl_result"])
+                self.assertEqual(session.repl_log()[1]["status"], "ok")
             finally:
                 session.close()
 

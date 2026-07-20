@@ -31,7 +31,20 @@ def _print_model_log(session: SingleAgentSession) -> None:
 
 
 def _print_help() -> None:
-    print("Type a normal message for the agent. :state shows presentable state; :python opens inspection; :log and :model-log show debug logs.")
+    print("Type a normal message for the agent. :state shows presentable state; :python opens inspection; :log, :model-log, and :repl-log show debug logs.")
+
+
+def _print_repl_log(session: SingleAgentSession) -> None:
+    entries = session.repl_log()
+    if not entries:
+        print("No model-to-REPL evaluations have been recorded.")
+        return
+    for entry in entries:
+        if entry["event"] == "model_program":
+            print("model -> repl:")
+            print(entry["source"])
+        else:
+            print(f"repl -> supervisor: {entry['status']}" + (f" ({entry['error']})" if entry["error"] else ""))
 
 
 def _render_default_presentation(session: SingleAgentSession, seen_message_ids: set[int]) -> None:
@@ -121,6 +134,9 @@ def main() -> None:
                 continue
             if line == ":model-log":
                 _print_model_log(session)
+                continue
+            if line == ":repl-log":
+                _print_repl_log(session)
                 continue
             if line == ":restart":
                 print(session.restart())

@@ -90,23 +90,38 @@ class SingleAgentSession:
         on_phase=None,
     ) -> KernelResult | None:
         from .openai_driver import OpenAIAgentController
-        return OpenAIAgentController(self.supervisor, driver, self.agent).run_turn(
+        result = OpenAIAgentController(self.supervisor, driver, self.agent).run_turn(
             on_delta=on_delta,
             on_program=self._append_model_program,
             on_phase=on_phase,
         )
+        self._append_repl_result(result)
+        return result
 
     def _append_model_program(self, planned: "PlannedTurn") -> None:
-        if self._model_log_path is None:
-            return
-        self._model_log_path.parent.mkdir(parents=True, exist_ok=True)
-        entry = {
+        self._append_model_log_entry({
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": "model_program",
             "raw_output": planned.raw_output,
             "source": planned.source,
             "request": planned.request,
-        }
+        })
+
+    def _append_repl_result(self, result: KernelResult | None) -> None:
+        if result is None:
+            return
+        self._append_model_log_entry({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": "repl_result",
+            "status": result.status,
+            "value": result.value,
+            "error": result.error,
+        })
+
+    def _append_model_log_entry(self, entry: dict) -> None:
+        if self._model_log_path is None:
+            return
+        self._model_log_path.parent.mkdir(parents=True, exist_ok=True)
         with self._model_log_path.open("a", encoding="utf-8") as log_file:
             log_file.write(json.dumps(entry, default=str) + "\n")
 
@@ -114,6 +129,10 @@ class SingleAgentSession:
         if self._model_log_path is None or not self._model_log_path.exists():
             return []
         return [json.loads(line) for line in self._model_log_path.read_text(encoding="utf-8").splitlines() if line]
+
+    def repl_log(self) -> list[dict]:
+        """Debug trace of model programs followed by their REPL outcomes."""
+        return [entry for entry in self.model_program_log() if entry["event"] in {"model_program", "repl_result"}]
 
     def close(self) -> None:
         self.supervisor.close()
