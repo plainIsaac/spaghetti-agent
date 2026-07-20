@@ -103,6 +103,20 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(runtime.value["status"], "idle")
         self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
 
+    def test_rejected_program_is_sent_back_as_explicit_model_feedback(self) -> None:
+        client = FakeClient("User Safety: safe")
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Please handle this later.")
+
+        session.run_openai_turn(OpenAIAgentDriver(client=client))
+        client.responses.output_text = "inbox.ack(inbox.pending()[0]['id'])"
+        session.run_openai_turn(OpenAIAgentDriver(client=client))
+
+        feedback = __import__("json").loads(client.responses.calls[1]["input"])["model_feedback"]
+        self.assertEqual(feedback["rejected_output"], "User Safety: safe")
+        self.assertIn("SyntaxError", feedback["error"])
+
     def test_legacy_console_commands_do_not_enter_model_context(self) -> None:
         source = "inbox.ack(inbox.pending()[-1]['id'])\n"
         client = FakeClient(source)

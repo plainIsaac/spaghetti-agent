@@ -25,6 +25,8 @@ signatures, ellipses, prose, or an empty program.
 Never return safety classifications or policy commentary; your output is always
 executable Python source, even when a request is innocuous or needs no action.
 The user messages in the input are durable inbox entries, not chat history.
+If `model_feedback` is present, your previous program was rejected. Correct the
+specific error and return one replacement Python program; do not discuss it.
 Read and deliberately acknowledge them with inbox.ack(message_id) when handled.
 Use observable.publish(...) for state worth showing by default, and
 user.inbox.add(...) only for concise messages that need the user's attention.
@@ -83,7 +85,11 @@ class OpenAICompatibleAgentDriver:
         presentable: dict[str, Any],
         on_delta: Callable[[str], None] | None = None,
     ) -> PlannedTurn:
-        request = {"inbox": inbox, "presentable": presentable}
+        request = {
+            "inbox": inbox,
+            "presentable": presentable,
+            "model_feedback": presentable.get("model_error"),
+        }
         response = self._get_client().responses.create(
             model=self.model,
             instructions=_INSTRUCTIONS,
@@ -215,6 +221,7 @@ class OpenAIAgentController:
         if not inbox:
             return None
         presentable = {value.name: value.value for value in self.supervisor.observable_state.list(self.agent)}
+        planned: PlannedTurn | None = None
         try:
             if on_phase is not None:
                 on_phase("planning")
@@ -225,12 +232,19 @@ class OpenAIAgentController:
         except OpenAIConfigurationError:
             raise
         except Exception as error:
+            feedback: dict[str, Any] = {
+                "error": f"{type(error).__name__}: {error}",
+                "instruction": "Your previous output was rejected. Return one valid Python program only.",
+            }
+            if planned is not None:
+                feedback["rejected_output"] = planned.raw_output
             self.supervisor.publish_state(
                 self.agent,
                 "model_error",
-                {"error": f"{type(error).__name__}: {error}"},
+                feedback,
                 presenter="error",
                 label="Model planning error",
+                show_by_default=False,
                 priority=100,
             )
             return KernelResult("error", error=f"{type(error).__name__}: {error}")
