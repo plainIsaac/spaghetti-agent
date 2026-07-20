@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 import sqlite3
+from threading import RLock
 from typing import Any
 
 
@@ -27,6 +28,7 @@ class Task:
 
 class TaskRegistry:
     def __init__(self, path: str = ":memory:") -> None:
+        self._lock = RLock()
         self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS tasks (
@@ -56,6 +58,10 @@ class TaskRegistry:
                 self._connection.execute(f"ALTER TABLE tasks ADD COLUMN {name} TEXT")
 
     def announce(self, owner: str, title: str, details: Any = None) -> Task:
+        with self._lock:
+            return self._announce(owner, title, details)
+
+    def _announce(self, owner: str, title: str, details: Any = None) -> Task:
         now = datetime.now(UTC).isoformat()
         cursor = self._connection.execute(
             "INSERT INTO tasks(owner,title,state,details,updated_at,announced_at) VALUES(?,?,?,?,?,?)",
@@ -66,14 +72,23 @@ class TaskRegistry:
         return self.get(int(cursor.lastrowid))  # type: ignore[return-value]
 
     def get(self, task_id: int) -> Task | None:
+        with self._lock:
+            return self._get(task_id)
+
+    def _get(self, task_id: int) -> Task | None:
         row = self._connection.execute("SELECT id,owner,title,state,details,wait_name,wait_equals,announced_at,taken_by,taken_at,completed_at,due_at FROM tasks WHERE id=?", (task_id,)).fetchone()
         return None if row is None else Task(*row[:4], json.loads(row[4]), row[5], json.loads(row[6]) if row[6] is not None else None, *row[7:])
 
     def list(self, owner: str) -> list[Task]:
-        return [self.get(int(row[0])) for row in self._connection.execute("SELECT id FROM tasks WHERE owner=? ORDER BY id", (owner,)).fetchall()]  # type: ignore[list-item]
+        with self._lock:
+            return [self._get(int(row[0])) for row in self._connection.execute("SELECT id FROM tasks WHERE owner=? ORDER BY id", (owner,)).fetchall()]  # type: ignore[list-item]
 
     def transition(self, owner: str, task_id: int, state: str) -> Task:
-        task = self.get(task_id)
+        with self._lock:
+            return self._transition(owner, task_id, state)
+
+    def _transition(self, owner: str, task_id: int, state: str) -> Task:
+        task = self._get(task_id)
         if task is None or task.owner != owner:
             raise KeyError(task_id)
         now = datetime.now(UTC).isoformat()
@@ -89,13 +104,14 @@ class TaskRegistry:
         self._connection.execute(f"UPDATE tasks SET state=?, updated_at=?{assignments} WHERE id=?", values)
         self._event(task_id, owner, state, {"from": task.state}, now)
         self._connection.commit()
-        return self.get(task_id)  # type: ignore[return-value]
+        return self._get(task_id)  # type: ignore[return-value]
 
     def wait_for(self, owner: str, task_id: int, name: str, equals: Any) -> Task:
-        task = self.transition(owner, task_id, "waiting")
-        self._connection.execute("UPDATE tasks SET wait_name=?, wait_equals=? WHERE id=?", (name, json.dumps(equals), task.id))
-        self._connection.commit()
-        return self.get(task.id)  # type: ignore[return-value]
+        with self._lock:
+            task = self._transition(owner, task_id, "waiting")
+            self._connection.execute("UPDATE tasks SET wait_name=?, wait_equals=? WHERE id=?", (name, json.dumps(equals), task.id))
+            self._connection.commit()
+            return self._get(task.id)  # type: ignore[return-value]
 
     def events(self, task_id: int) -> list[dict[str, Any]]:
         return [
@@ -136,16 +152,18 @@ class TaskRegistry:
         return challenge
 
     def schedule(self, owner: str, task_id: int, due_at: datetime) -> Task:
-        task = self.transition(owner, task_id, "scheduled")
-        due = due_at.astimezone(UTC).isoformat()
-        self._connection.execute("UPDATE tasks SET due_at=? WHERE id=?", (due, task.id))
-        self._event(task.id, owner, "scheduled", {"due_at": due}, datetime.now(UTC).isoformat())
-        self._connection.commit()
-        return self.get(task.id)  # type: ignore[return-value]
+        with self._lock:
+            task = self._transition(owner, task_id, "scheduled")
+            due = due_at.astimezone(UTC).isoformat()
+            self._connection.execute("UPDATE tasks SET due_at=? WHERE id=?", (due, task.id))
+            self._event(task.id, owner, "scheduled", {"due_at": due}, datetime.now(UTC).isoformat())
+            self._connection.commit()
+            return self._get(task.id)  # type: ignore[return-value]
 
     def due(self, now: datetime) -> list[Task]:
-        rows = self._connection.execute("SELECT id FROM tasks WHERE state='scheduled' AND due_at<=?", (now.astimezone(UTC).isoformat(),)).fetchall()
-        return [self.transition(self.get(int(row[0])).owner, int(row[0]), "ready") for row in rows]  # type: ignore[union-attr]
+        with self._lock:
+            rows = self._connection.execute("SELECT id FROM tasks WHERE state='scheduled' AND due_at<=?", (now.astimezone(UTC).isoformat(),)).fetchall()
+            return [self._transition(self._get(int(row[0])).owner, int(row[0]), "ready") for row in rows]  # type: ignore[union-attr]
 
     def _event(self, task_id: int, actor: str, event: str, details: Any, created_at: str) -> None:
         self._connection.execute(

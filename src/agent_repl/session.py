@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 import json
-from threading import Lock
+from threading import Event, Lock, Thread
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
@@ -160,6 +160,10 @@ class ModelTurnWorker:
         self._phase = "idle"
         self._started_at: datetime | None = None
         self._lock = Lock()
+        self._wake_seen: set[int] = set()
+        self._wake_stop = Event()
+        self._wake_thread = Thread(target=self._watch_task_wakeups, name="agent-task-wakeups", daemon=True)
+        self._wake_thread.start()
 
     def request_turn(self) -> bool:
         with self._lock:
@@ -169,6 +173,17 @@ class ModelTurnWorker:
             self._started_at = datetime.now(timezone.utc)
             self._future = self._executor.submit(self._run)
             return True
+
+    def _watch_task_wakeups(self) -> None:
+        """Dispatch each supervisor task wake-up once, without agent polling."""
+        while not self._wake_stop.wait(0.1):
+            for message in self.session.supervisor.journal.pending(self.session.agent):
+                if message.sender != "supervisor" or not message.text.startswith("Task "):
+                    continue
+                if message.id in self._wake_seen:
+                    continue
+                self._wake_seen.add(message.id)
+                self.request_turn()
 
     def _run(self) -> KernelResult | None:
         def phase(value: str) -> None:
@@ -201,6 +216,8 @@ class ModelTurnWorker:
         return result
 
     def close(self) -> None:
+        self._wake_stop.set()
+        self._wake_thread.join(timeout=1)
         self._executor.shutdown(wait=False, cancel_futures=False)
 
 

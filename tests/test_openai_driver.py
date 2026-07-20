@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from agent_repl import OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
+from agent_repl.session import ModelTurnWorker
 from agent_repl.openai_driver import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
@@ -166,6 +167,19 @@ class OpenAIDriverTests(unittest.TestCase):
                 self.assertEqual(session.repl_log()[1]["status"], "ok")
             finally:
                 session.close()
+
+    def test_task_wakeup_dispatches_a_model_turn_without_user_input(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        worker = ModelTurnWorker(session, OpenAIAgentDriver(client=FakeClient("inbox.ack(inbox.pending()[-1]['id'])")))
+        self.addCleanup(worker.close)
+        session.evaluate("task = tasks.announce('Check later')\ntasks.schedule_after(task['id'], 0)")
+        import time
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and session.supervisor.journal.pending("agent"):
+            time.sleep(0.02)
+
+        self.assertEqual(session.supervisor.journal.pending("agent"), [])
 
 
 if __name__ == "__main__":
