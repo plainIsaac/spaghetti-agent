@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 from threading import Event, Lock, Thread
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .journal import InboxJournal, Message
 from .kernel import KernelResult, PersistentKernel
@@ -152,9 +152,15 @@ class SingleAgentSession:
 class ModelTurnWorker:
     """Serial background model work so console input is never blocked by planning."""
 
-    def __init__(self, session: SingleAgentSession, driver: "OpenAICompatibleAgentDriver") -> None:
+    def __init__(
+        self,
+        session: SingleAgentSession,
+        driver: "OpenAICompatibleAgentDriver",
+        on_complete: Callable[[KernelResult | None], None] | None = None,
+    ) -> None:
         self.session = session
         self.driver = driver
+        self._on_complete = on_complete
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-model")
         self._future: Future[KernelResult | None] | None = None
         self._phase = "idle"
@@ -190,9 +196,12 @@ class ModelTurnWorker:
             with self._lock:
                 self._phase = value
         try:
-            return self.session.run_openai_turn(self.driver, on_phase=phase)
+            result = self.session.run_openai_turn(self.driver, on_phase=phase)
         except Exception as error:
-            return KernelResult("error", error=f"{type(error).__name__}: {error}")
+            result = KernelResult("error", error=f"{type(error).__name__}: {error}")
+        if self._on_complete is not None:
+            self._on_complete(result)
+        return result
 
     def status(self) -> tuple[str, float]:
         with self._lock:

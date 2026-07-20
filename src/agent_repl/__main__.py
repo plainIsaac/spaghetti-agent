@@ -112,7 +112,13 @@ def main() -> None:
     print("Agent REPL. Send a message; the agent may continue independently. Use :help for controls.")
     seen_message_ids: set[int] = set()
     seen_state_revisions: dict[str, int] = {}
-    worker = ModelTurnWorker(session, model_driver) if model_driver is not None else None
+    def render_completion(result) -> None:
+        print()
+        _render_default_presentation(session, seen_message_ids, seen_state_revisions)
+        print(f"model> evaluation {result.status if result else 'skipped'}")
+        print("you> ", end="", flush=True)
+
+    worker = ModelTurnWorker(session, model_driver, render_completion) if model_driver is not None else None
     agents_were_active = False
     try:
         while True:
