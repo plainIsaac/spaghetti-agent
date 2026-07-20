@@ -209,7 +209,11 @@ class Supervisor:
             task = self.tasks.wait_for(agent, int(payload["task_id"]), str(payload["name"]), payload.get("equals"))
             return {"id": task.id, "state": task.state}
         if kind == "tasks.list":
-            return [{"id": task.id, "title": task.title, "state": task.state, "details": task.details} for task in self.tasks.list(agent)]
+            return [
+                {"id": task.id, "title": task.title, "state": task.state, "details": task.details,
+                 "taken_by": task.taken_by, "taken_at": task.taken_at, "announced_at": task.announced_at}
+                for task in self.tasks.list(agent)
+            ]
         if kind == "inbox.handler_failed":
             self.publish_state(
                 agent,

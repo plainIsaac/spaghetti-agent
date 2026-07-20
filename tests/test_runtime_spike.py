@@ -20,7 +20,12 @@ class RuntimeSpikeTests(unittest.TestCase):
 
         self.assertEqual(created.status, "ok")
         self.assertEqual(created.value["state"], "waiting")
-        self.assertEqual(session.supervisor.tasks.list("agent")[0].state, "ready")
+        task = session.supervisor.tasks.list("agent")[0]
+        self.assertEqual(task.state, "ready")
+        self.assertEqual(task.taken_by, "agent")
+        self.assertIsNotNone(task.announced_at)
+        self.assertIsNotNone(task.taken_at)
+        self.assertEqual([event["event"] for event in session.supervisor.tasks.events(task.id)], ["announced", "working", "waiting", "ready"])
         self.assertIn("Task 1 is ready", session.supervisor.journal.pending("agent")[0].text)
 
     def test_non_collection_loops_have_a_default_budget_and_one_shot_override(self) -> None:
