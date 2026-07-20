@@ -208,6 +208,11 @@ class Supervisor:
         if kind == "tasks.wait_for":
             task = self.tasks.wait_for(agent, int(payload["task_id"]), str(payload["name"]), payload.get("equals"))
             return {"id": task.id, "state": task.state}
+        if kind == "tasks.report_error":
+            return self.tasks.report_error(agent, int(payload["task_id"]), str(payload["error"]))
+        if kind == "tasks.challenge":
+            task = self.tasks.challenge(agent, int(payload["task_id"]), str(payload["description"]))
+            return {"id": task.id, "state": task.state, "title": task.title}
         if kind == "tasks.list":
             return [
                 {"id": task.id, "title": task.title, "state": task.state, "details": task.details,

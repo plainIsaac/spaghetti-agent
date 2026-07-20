@@ -28,6 +28,26 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual([event["event"] for event in session.supervisor.tasks.events(task.id)], ["announced", "working", "waiting", "ready"])
         self.assertIn("Task 1 is ready", session.supervisor.journal.pending("agent")[0].text)
 
+    def test_task_errors_create_challenges_and_promote_recurring_trouble(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        result = session.evaluate(
+            "task = tasks.announce('Repair integration')\n"
+            "tasks.take(task['id'])\n"
+            "challenge = tasks.challenge(task['id'], 'Provider response is malformed')\n"
+            "tasks.report_error(task['id'], 'SyntaxError: invalid syntax')\n"
+            "tasks.report_error(task['id'], 'SyntaxError: invalid syntax')\n"
+            "_result = tasks.report_error(task['id'], 'SyntaxError: invalid syntax')"
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value["count"], 3)
+        self.assertIsNotNone(result.value["trouble_task_id"])
+        self.assertEqual([task.title for task in session.supervisor.tasks.list("agent")], [
+            "Repair integration", "Challenge: Repair integration", "Trouble: recurring error in task 1",
+        ])
+
     def test_non_collection_loops_have_a_default_budget_and_one_shot_override(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

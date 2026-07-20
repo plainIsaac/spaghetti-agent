@@ -35,6 +35,12 @@ class TaskRegistry:
                 taken_by TEXT, taken_at TEXT, completed_at TEXT)"""
         )
         self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS task_errors (
+                task_id INTEGER NOT NULL, fingerprint TEXT NOT NULL, error TEXT NOT NULL,
+                count INTEGER NOT NULL, trouble_task_id INTEGER, last_at TEXT NOT NULL,
+                PRIMARY KEY(task_id, fingerprint))"""
+        )
+        self._connection.execute(
             """CREATE TABLE IF NOT EXISTS task_events (
                 id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, actor TEXT NOT NULL,
                 event TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT NOT NULL)"""
@@ -95,6 +101,38 @@ class TaskRegistry:
             {"actor": row[0], "event": row[1], "details": json.loads(row[2]), "created_at": row[3]}
             for row in self._connection.execute("SELECT actor,event,details,created_at FROM task_events WHERE task_id=? ORDER BY id", (task_id,))
         ]
+
+    def report_error(self, owner: str, task_id: int, error: str) -> dict[str, Any]:
+        task = self.get(task_id)
+        if task is None or task.owner != owner:
+            raise KeyError(task_id)
+        fingerprint = error.strip()[:300]
+        now = datetime.now(UTC).isoformat()
+        row = self._connection.execute("SELECT count,trouble_task_id FROM task_errors WHERE task_id=? AND fingerprint=?", (task_id, fingerprint)).fetchone()
+        count = 1 if row is None else int(row[0]) + 1
+        trouble_task_id = None if row is None else row[1]
+        self._connection.execute(
+            "INSERT INTO task_errors(task_id,fingerprint,error,count,trouble_task_id,last_at) VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(task_id,fingerprint) DO UPDATE SET count=excluded.count,last_at=excluded.last_at",
+            (task_id, fingerprint, error, count, trouble_task_id, now),
+        )
+        self._event(task_id, owner, "error", {"error": error, "count": count}, now)
+        if count >= 3 and trouble_task_id is None:
+            trouble = self.announce(owner, f"Trouble: recurring error in task {task_id}", {"task_id": task_id, "error": error, "count": count})
+            self._connection.execute("UPDATE task_errors SET trouble_task_id=? WHERE task_id=? AND fingerprint=?", (trouble.id, task_id, fingerprint))
+            self._event(task_id, owner, "trouble_announced", {"trouble_task_id": trouble.id, "count": count}, now)
+            trouble_task_id = trouble.id
+        self._connection.commit()
+        return {"count": count, "trouble_task_id": trouble_task_id}
+
+    def challenge(self, owner: str, task_id: int, description: str) -> Task:
+        task = self.get(task_id)
+        if task is None or task.owner != owner:
+            raise KeyError(task_id)
+        challenge = self.announce(owner, f"Challenge: {task.title}", {"task_id": task_id, "description": description})
+        self._event(task_id, owner, "challenge_announced", {"challenge_task_id": challenge.id, "description": description}, datetime.now(UTC).isoformat())
+        self._connection.commit()
+        return challenge
 
     def _event(self, task_id: int, actor: str, event: str, details: Any, created_at: str) -> None:
         self._connection.execute(

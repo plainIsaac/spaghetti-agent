@@ -224,6 +224,12 @@ class Tasks:
     def wait_for(self, task_id: int, name: str, equals: Any) -> dict[str, Any]:
         return self._call_supervisor("tasks.wait_for", {"task_id": task_id, "name": name, "equals": equals})
 
+    def report_error(self, task_id: int, error: str) -> dict[str, Any]:
+        return self._call_supervisor("tasks.report_error", {"task_id": task_id, "error": error})
+
+    def challenge(self, task_id: int, description: str) -> dict[str, Any]:
+        return self._call_supervisor("tasks.challenge", {"task_id": task_id, "description": description})
+
     def list(self) -> list[dict[str, Any]]:
         return self._call_supervisor("tasks.list", {})
 

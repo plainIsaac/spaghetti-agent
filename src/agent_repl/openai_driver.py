@@ -37,6 +37,8 @@ capabilities. Do not explain the code outside the Python source.
 Use `tasks.announce(title)`, `tasks.take(id)`, `tasks.complete(id)`, and
 `tasks.wait_for(id, observable_name, expected_value)` to express durable work;
 do not use a long-running polling loop to wait for observable state.
+Record failures with `tasks.report_error(id, error)`; when work is materially
+hard, announce a follow-up with `tasks.challenge(id, description)`.
 
 A valid minimal program looks like:
 inbox.reply_to_latest("Handled your request.")"""
