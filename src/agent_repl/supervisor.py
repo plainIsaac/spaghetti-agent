@@ -266,6 +266,21 @@ class Supervisor:
         if kind == "context.messages.with_party":
             party = str(payload["party"])
             return [self._conversation_data(message) for message in self.journal.conversation(agent, party)]
+        if kind == "context.agents.list":
+            return sorted(name for name in self._repls if name != "user")
+        if kind == "context.conflicts.related":
+            return self.tasks.related_conflicts(str(payload["resource"]))
+        if kind == "agents.message":
+            recipient = str(payload["recipient"])
+            if recipient not in self._repls:
+                raise KeyError(f"Unknown agent: {recipient}")
+            message = self.journal.append(recipient=recipient, sender=agent, text=str(payload["text"]))
+            kernel = self._kernels.get(recipient)
+            if kernel is not None:
+                kernel.deliver(message)
+            return {"id": message.id, "recipient": recipient}
+        if kind == "conflicts.announce":
+            return self.tasks.announce_conflict(agent, str(payload["resource"]), str(payload["summary"]), list(payload.get("related_tasks", [])))
         if kind == "inbox.handler_failed":
             self.publish_state(
                 agent,

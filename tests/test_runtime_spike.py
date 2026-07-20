@@ -38,6 +38,21 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.value, ("Investigate parser", 1, "ready"))
 
+    def test_agent_can_announce_conflict_and_message_a_peer(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.supervisor.create_repl("peer")
+
+        result = session.evaluate(
+            "conflict = conflicts.announce('src/service.py', 'Competing edits')\n"
+            "agents.message('peer', 'Which invariant are you preserving?')\n"
+            "_result = (context.agents.list(), context.conflicts.related('src/service.py')[0]['summary'])"
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value, (["agent", "peer"], "Competing edits"))
+        self.assertEqual(session.supervisor.journal.pending("peer")[0].text, "Which invariant are you preserving?")
+
     def test_task_errors_create_challenges_and_promote_recurring_trouble(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

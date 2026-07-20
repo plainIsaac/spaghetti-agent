@@ -275,12 +275,46 @@ class ContextMessages:
         return self._call_supervisor("context.messages.with_party", {"party": party})
 
 
+class ContextAgents:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def list(self) -> list[str]:
+        return self._call_supervisor("context.agents.list", {})
+
+
+class ContextConflicts:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def related(self, resource: str) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.conflicts.related", {"resource": resource})
+
+
 class Context:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
         self.tasks = ContextTasks(call_supervisor)
         self.errors = ContextErrors(call_supervisor)
         self.observations = ContextObservations(call_supervisor)
         self.messages = ContextMessages(call_supervisor)
+        self.agents = ContextAgents(call_supervisor)
+        self.conflicts = ContextConflicts(call_supervisor)
+
+
+class Agents:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def message(self, recipient: str, text: str) -> dict[str, Any]:
+        return self._call_supervisor("agents.message", {"recipient": recipient, "text": text})
+
+
+class Conflicts:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def announce(self, resource: str, summary: str, related_tasks: list[int] = []) -> dict[str, Any]:
+        return self._call_supervisor("conflicts.announce", {"resource": resource, "summary": summary, "related_tasks": related_tasks})
 
 
 class PresentableState:
@@ -361,6 +395,8 @@ def _kernel_main(
         namespace["user"] = User(call_supervisor)
         namespace["tasks"] = Tasks(call_supervisor)
         namespace["context"] = Context(call_supervisor)
+        namespace["agents"] = Agents(call_supervisor)
+        namespace["conflicts"] = Conflicts(call_supervisor)
     elif role == "user":
         namespace["presentable"] = PresentableState(call_supervisor)
         namespace["agent"] = Agent(call_supervisor)

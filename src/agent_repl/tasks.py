@@ -38,6 +38,12 @@ class TaskRegistry:
                 taken_by TEXT, taken_at TEXT, completed_at TEXT, due_at TEXT)"""
         )
         self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS conflicts (
+                id INTEGER PRIMARY KEY, owner TEXT NOT NULL, resource TEXT NOT NULL,
+                summary TEXT NOT NULL, related_tasks TEXT NOT NULL, state TEXT NOT NULL,
+                created_at TEXT NOT NULL)"""
+        )
+        self._connection.execute(
             """CREATE TABLE IF NOT EXISTS task_errors (
                 task_id INTEGER NOT NULL, fingerprint TEXT NOT NULL, error TEXT NOT NULL,
                 count INTEGER NOT NULL, trouble_task_id INTEGER, last_at TEXT NOT NULL,
@@ -134,6 +140,21 @@ class TaskRegistry:
         return [
             {"task_id": row[0], "error": row[1], "count": row[2], "trouble_task_id": row[3], "last_at": row[4], "task_title": row[5], "owner": row[6]}
             for row in self._connection.execute(query + " ORDER BY e.last_at DESC", parameters)
+        ]
+
+    def announce_conflict(self, owner: str, resource: str, summary: str, related_tasks: list[int]) -> dict[str, Any]:
+        now = datetime.now(UTC).isoformat()
+        cursor = self._connection.execute(
+            "INSERT INTO conflicts(owner,resource,summary,related_tasks,state,created_at) VALUES(?,?,?,?,?,?)",
+            (owner, resource, summary, json.dumps(related_tasks), "open", now),
+        )
+        self._connection.commit()
+        return {"id": int(cursor.lastrowid), "resource": resource, "summary": summary, "state": "open", "created_at": now}
+
+    def related_conflicts(self, resource: str) -> list[dict[str, Any]]:
+        return [
+            {"id": row[0], "owner": row[1], "resource": row[2], "summary": row[3], "related_tasks": json.loads(row[4]), "state": row[5], "created_at": row[6]}
+            for row in self._connection.execute("SELECT id,owner,resource,summary,related_tasks,state,created_at FROM conflicts WHERE resource=? ORDER BY id DESC", (resource,))
         ]
 
     def report_error(self, owner: str, task_id: int, error: str) -> dict[str, Any]:
