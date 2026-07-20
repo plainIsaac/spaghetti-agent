@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 from agent_repl import OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
@@ -24,6 +26,21 @@ class FakeResponses:
 class FakeClient:
     def __init__(self, output_text: str) -> None:
         self.responses = FakeResponses(output_text)
+
+
+class StreamResponses:
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return iter(SimpleNamespace(type="response.output_text.delta", delta=chunk) for chunk in self.chunks)
+
+
+class StreamClient:
+    def __init__(self, chunks: list[str]) -> None:
+        self.responses = StreamResponses(chunks)
 
 
 class OpenAIDriverTests(unittest.TestCase):
@@ -72,6 +89,25 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("empty agent program", result.error)
         self.assertIn("model_error", {value.name for value in session.observe()})
         self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
+
+    def test_driver_streams_program_deltas_and_preserves_raw_program_log(self) -> None:
+        source = "inbox.ack(inbox.pending()[0]['id'])\n"
+        client = StreamClient(["```python\n", source, "```"])
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            session = SingleAgentSession.open(str(root / "inbox.sqlite"), str(root / "state.sqlite"))
+            try:
+                session.send("Handle this.")
+                deltas: list[str] = []
+
+                result = session.run_openai_turn(OpenAIAgentDriver(client=client), on_delta=deltas.append)
+
+                self.assertEqual(result.status, "ok")
+                self.assertEqual("".join(deltas), f"```python\n{source}```")
+                self.assertTrue(client.responses.calls[0]["stream"])
+                self.assertEqual(session.model_program_log()[0]["raw_output"], "".join(deltas))
+            finally:
+                session.close()
 
 
 if __name__ == "__main__":

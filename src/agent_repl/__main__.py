@@ -12,7 +12,7 @@ from .openai_driver import (
     OpenAIConfigurationError,
     OpenRouterAgentDriver,
 )
-from .session import SingleAgentSession
+from .session import ModelTurnWorker, SingleAgentSession, _NOT_READY
 
 
 def _format_state(session: SingleAgentSession) -> str:
@@ -74,11 +74,21 @@ def main() -> None:
         model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
-    print("Agent REPL. Enter a message. Use :python, :log, :restart, or :quit.")
+    print("Agent REPL. Enter a message. Use :python, :state, :log, :model-log, :restart, or :quit.")
     seen_message_ids: set[int] = set()
+    worker = ModelTurnWorker(session, model_driver) if model_driver is not None else None
     try:
         while True:
             _render_default_presentation(session, seen_message_ids)
+            if worker is not None:
+                result = worker.collect()
+                if result is not _NOT_READY:
+                    print(f"Model agent evaluation: {result.status if result else 'no pending message'}")
+                    if result is not None and result.status == "ok" and session.supervisor.journal.pending("agent"):
+                        worker.request_turn()
+                phase, elapsed = worker.status()
+                if phase not in {"idle", "completed"}:
+                    print(f"Model: {phase} ({elapsed:.1f}s); you can keep sending messages.")
             line = input("you> ").strip()
             if not line:
                 continue
@@ -87,9 +97,16 @@ def main() -> None:
             if line == ":python":
                 _run_user_repl(session)
                 continue
+            if line == ":state":
+                print(_format_state(session))
+                continue
             if line == ":log":
                 for message in session.conversation_log():
                     print(f"{message.created_at.isoformat()} {message.sender} -> {message.recipient}: {message.text}")
+                continue
+            if line == ":model-log":
+                for entry in session.model_program_log():
+                    print(entry["raw_output"])
                 continue
             if line == ":restart":
                 print(session.restart())
@@ -101,11 +118,16 @@ def main() -> None:
                 print(f"Demo agent processed {session.run_demo_turn()} message(s).")
             if model_driver is not None:
                 try:
-                    result = session.run_openai_turn(model_driver)
-                    print(f"Model agent evaluation: {result.status if result else 'no pending message'}")
+                    model_driver.validate_configuration()
+                    if worker is not None and not worker.request_turn():
+                        print("Model is already working; this message remains queued.")
+                    else:
+                        print("Model turn started; you can keep sending messages.")
                 except OpenAIConfigurationError as error:
                     print(f"Model setup required: {error}")
     finally:
+        if worker is not None:
+            worker.close()
         session.close()
 
 

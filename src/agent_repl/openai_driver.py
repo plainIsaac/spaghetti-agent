@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .kernel import KernelResult
 from .supervisor import Supervisor
@@ -48,6 +48,7 @@ class OpenAIConfigurationError(RuntimeError):
 class PlannedTurn:
     source: str
     request: dict[str, Any]
+    raw_output: str
 
 
 class OpenAICompatibleAgentDriver:
@@ -70,17 +71,44 @@ class OpenAICompatibleAgentDriver:
         self.base_url = base_url
         self.request_timeout = request_timeout
 
-    def plan(self, inbox: list[dict[str, Any]], presentable: dict[str, Any]) -> PlannedTurn:
+    def plan(
+        self,
+        inbox: list[dict[str, Any]],
+        presentable: dict[str, Any],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> PlannedTurn:
         request = {"inbox": inbox, "presentable": presentable}
         response = self._get_client().responses.create(
             model=self.model,
             instructions=_INSTRUCTIONS,
             input=json.dumps(request),
+            stream=True,
         )
-        source = self._strip_code_fence(str(response.output_text))
+        raw_output = self._read_stream(response, on_delta)
+        source = self._strip_code_fence(raw_output)
         if not source.strip():
             raise RuntimeError("OpenAI returned an empty agent program")
-        return PlannedTurn(source, request)
+        return PlannedTurn(source, request, raw_output)
+
+    @staticmethod
+    def _read_stream(response: Any, on_delta: Callable[[str], None] | None) -> str:
+        # The small compatibility path keeps injected test clients usable.
+        if hasattr(response, "output_text"):
+            text = str(response.output_text)
+            if on_delta is not None and text:
+                on_delta(text)
+            return text
+        parts: list[str] = []
+        for event in response:
+            if getattr(event, "type", None) != "response.output_text.delta":
+                continue
+            delta = getattr(event, "delta", "")
+            if delta:
+                text = str(delta)
+                parts.append(text)
+                if on_delta is not None:
+                    on_delta(text)
+        return "".join(parts)
 
     def _get_client(self) -> ResponsesClient:
         if self._client is not None:
@@ -105,6 +133,10 @@ class OpenAICompatibleAgentDriver:
             options["base_url"] = self.base_url
         self._client = OpenAI(**options)
         return self._client
+
+    def validate_configuration(self) -> None:
+        """Fail fast for missing credentials without starting a background turn."""
+        self._get_client()
 
     @staticmethod
     def _strip_code_fence(source: str) -> str:
@@ -162,13 +194,22 @@ class OpenAIAgentController:
         self.driver = driver
         self.agent = agent
 
-    def run_turn(self) -> KernelResult | None:
+    def run_turn(
+        self,
+        on_delta: Callable[[str], None] | None = None,
+        on_program: Callable[[PlannedTurn], None] | None = None,
+        on_phase: Callable[[str], None] | None = None,
+    ) -> KernelResult | None:
         inbox = [self.supervisor._message_data(message) for message in self.supervisor.journal.pending(self.agent)]
         if not inbox:
             return None
         presentable = {value.name: value.value for value in self.supervisor.observable_state.list(self.agent)}
         try:
-            planned = self.driver.plan(inbox, presentable)
+            if on_phase is not None:
+                on_phase("planning")
+            planned = self.driver.plan(inbox, presentable, on_delta)
+            if on_program is not None:
+                on_program(planned)
         except OpenAIConfigurationError:
             raise
         except Exception as error:
@@ -181,4 +222,6 @@ class OpenAIAgentController:
                 priority=100,
             )
             return KernelResult("error", error=f"{type(error).__name__}: {error}")
+        if on_phase is not None:
+            on_phase("executing")
         return self.supervisor.agent_kernel(self.agent).evaluate(planned.source)

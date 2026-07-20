@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
+import json
+from threading import Lock
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 from .journal import InboxJournal, Message
 from .kernel import KernelResult, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
 from .supervisor import RestartReport, Supervisor
+
+if TYPE_CHECKING:
+    from .openai_driver import OpenAICompatibleAgentDriver, PlannedTurn
 
 
 _DEMO_TURN = """
@@ -28,19 +36,21 @@ class SingleAgentSession:
     to change message delivery, observation, or restart semantics.
     """
 
-    def __init__(self, supervisor: Supervisor, agent: str = "agent") -> None:
+    def __init__(self, supervisor: Supervisor, agent: str = "agent", model_log_path: str | None = None) -> None:
         self.supervisor = supervisor
         self.agent = agent
         self.supervisor.create_repl(agent)
         self.kernel = self.supervisor.start_agent_kernel(agent)
         self.user_kernel = self.supervisor.start_user_kernel(agent=agent)
+        self._model_log_path = Path(model_log_path) if model_log_path else None
 
     @classmethod
     def open(cls, inbox_path: str = ":memory:", observable_state_path: str = ":memory:", agent: str = "agent") -> "SingleAgentSession":
         debug_log_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("conversation.jsonl"))
         journal = InboxJournal(inbox_path, debug_log_path)
         observable_state = ObservableStateRegistry(observable_state_path)
-        return cls(Supervisor(journal, observable_state), agent)
+        model_log_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("model-programs.jsonl"))
+        return cls(Supervisor(journal, observable_state), agent, model_log_path)
 
     def send(self, text: str) -> Message:
         """Queue ordinary user text without executing it as agent source code."""
@@ -73,12 +83,96 @@ class SingleAgentSession:
             raise RuntimeError(result.error)
         return int(result.value)
 
-    def run_openai_turn(self, driver: "OpenAIAgentDriver") -> KernelResult | None:
+    def run_openai_turn(
+        self,
+        driver: "OpenAICompatibleAgentDriver",
+        on_delta=None,
+        on_phase=None,
+    ) -> KernelResult | None:
         from .openai_driver import OpenAIAgentController
+        return OpenAIAgentController(self.supervisor, driver, self.agent).run_turn(
+            on_delta=on_delta,
+            on_program=self._append_model_program,
+            on_phase=on_phase,
+        )
 
-        return OpenAIAgentController(self.supervisor, driver, self.agent).run_turn()
+    def _append_model_program(self, planned: "PlannedTurn") -> None:
+        if self._model_log_path is None:
+            return
+        self._model_log_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": "model_program",
+            "raw_output": planned.raw_output,
+            "source": planned.source,
+            "request": planned.request,
+        }
+        with self._model_log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(entry, default=str) + "\n")
+
+    def model_program_log(self) -> list[dict]:
+        if self._model_log_path is None or not self._model_log_path.exists():
+            return []
+        return [json.loads(line) for line in self._model_log_path.read_text(encoding="utf-8").splitlines() if line]
 
     def close(self) -> None:
         self.supervisor.close()
         self.supervisor.journal.close()
         self.supervisor.observable_state.close()
+
+
+class ModelTurnWorker:
+    """Serial background model work so console input is never blocked by planning."""
+
+    def __init__(self, session: SingleAgentSession, driver: "OpenAICompatibleAgentDriver") -> None:
+        self.session = session
+        self.driver = driver
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-model")
+        self._future: Future[KernelResult | None] | None = None
+        self._phase = "idle"
+        self._started_at: datetime | None = None
+        self._lock = Lock()
+
+    def request_turn(self) -> bool:
+        with self._lock:
+            if self._future is not None and not self._future.done():
+                return False
+            self._phase = "queued"
+            self._started_at = datetime.now(timezone.utc)
+            self._future = self._executor.submit(self._run)
+            return True
+
+    def _run(self) -> KernelResult | None:
+        def phase(value: str) -> None:
+            with self._lock:
+                self._phase = value
+        try:
+            return self.session.run_openai_turn(self.driver, on_phase=phase)
+        except Exception as error:
+            return KernelResult("error", error=f"{type(error).__name__}: {error}")
+
+    def status(self) -> tuple[str, float]:
+        with self._lock:
+            phase, started = self._phase, self._started_at
+            future = self._future
+        if future is not None and future.done():
+            phase = "completed"
+        elapsed = 0.0 if started is None else (datetime.now(timezone.utc) - started).total_seconds()
+        return phase, elapsed
+
+    def collect(self) -> KernelResult | None | object:
+        with self._lock:
+            future = self._future
+        if future is None or not future.done():
+            return _NOT_READY
+        result = future.result()
+        with self._lock:
+            if self._future is future:
+                self._future = None
+        return result
+
+    def close(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=False)
+
+
+_NOT_READY = object()
