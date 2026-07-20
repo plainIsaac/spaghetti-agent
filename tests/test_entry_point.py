@@ -10,6 +10,20 @@ from agent_repl.__main__ import main
 
 
 class EntryPointTests(unittest.TestCase):
+    def test_default_presentation_renders_state_only_on_revision_change(self) -> None:
+        from agent_repl.__main__ import _render_default_presentation
+        from agent_repl import SingleAgentSession
+
+        output = StringIO()
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.supervisor.publish_state("agent", "status", "ready")
+        with patch("sys.stdout", output):
+            _render_default_presentation(session, set(), {})
+            _render_default_presentation(session, set(), {"status": 1})
+
+        self.assertEqual(output.getvalue().count("state> status: ready"), 1)
+
     def test_model_log_ignores_trailing_repl_result(self) -> None:
         from agent_repl.__main__ import _print_model_log
         from unittest.mock import Mock
@@ -36,7 +50,7 @@ class EntryPointTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("Queued for the agent.", rendered)
         self.assertIn("latest_input:", rendered)
-        self.assertIn("agent> Received your message", rendered)
+        self.assertIn("reply[agent]> Received your message", rendered)
 
     def test_openai_mode_explains_missing_configuration(self) -> None:
         output = StringIO()

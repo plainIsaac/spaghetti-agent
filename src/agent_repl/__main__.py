@@ -31,7 +31,7 @@ def _print_model_log(session: SingleAgentSession) -> None:
 
 
 def _print_help() -> None:
-    print("Type a normal message for the agent. :state shows presentable state; :python opens inspection; :log, :model-log, and :repl-log show debug logs.")
+    print("Type a normal message for the agent. State is shown only when it changes; :state shows the current snapshot. :python opens inspection; :log, :model-log, and :repl-log show debug logs.")
 
 
 def _print_repl_log(session: SingleAgentSession) -> None:
@@ -47,11 +47,19 @@ def _print_repl_log(session: SingleAgentSession) -> None:
             print(f"{entry['timestamp']} repl -> supervisor: {entry['status']}" + (f" ({entry['error']})" if entry["error"] else ""))
 
 
-def _render_default_presentation(session: SingleAgentSession, seen_message_ids: set[int]) -> None:
-    print(_format_state(session))
+def _render_default_presentation(
+    session: SingleAgentSession,
+    seen_message_ids: set[int],
+    seen_state_revisions: dict[str, int],
+) -> None:
+    for value in session.observe():
+        if not value.show_by_default or seen_state_revisions.get(value.name) == value.revision:
+            continue
+        print(f"state> {value.label or value.name}: {value.value}")
+        seen_state_revisions[value.name] = value.revision
     for message in session.user_messages():
         if message.id not in seen_message_ids:
-            print(f"{session.user_message_label(message)}> {message.text}")
+            print(f"reply[{session.user_message_label(message)}]> {message.text}")
             seen_message_ids.add(message.id)
 
 
@@ -99,22 +107,24 @@ def main() -> None:
         model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
-    print("Agent REPL. Enter a message. Use :help for controls.")
+    print("Agent REPL. Send a message; the agent may continue independently. Use :help for controls.")
     seen_message_ids: set[int] = set()
+    seen_state_revisions: dict[str, int] = {}
     worker = ModelTurnWorker(session, model_driver) if model_driver is not None else None
     try:
         while True:
-            _render_default_presentation(session, seen_message_ids)
+            _render_default_presentation(session, seen_message_ids, seen_state_revisions)
+            prompt = "you> "
             if worker is not None:
                 result = worker.collect()
                 if result is not _NOT_READY:
-                    print(f"Model agent evaluation: {result.status if result else 'no pending message'}")
+                    print(f"model> evaluation {result.status if result else 'skipped'}")
                     if result is not None and result.status == "ok" and session.supervisor.journal.pending("agent"):
                         worker.request_turn()
                 phase, elapsed = worker.status()
                 if phase not in {"idle", "completed"}:
-                    print(f"Model: {phase} ({elapsed:.1f}s); you can keep sending messages.")
-            line = input("you> ").strip()
+                    prompt = f"you [{phase} {elapsed:.1f}s]> "
+            line = input(prompt).strip()
             if not line:
                 continue
             if line == ":quit":
