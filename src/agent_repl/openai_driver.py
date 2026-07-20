@@ -20,6 +20,8 @@ _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
 Return only Python source code to evaluate in that REPL; do not use Markdown.
 Your entire output must compile under Python exec. Never return placeholders,
 signatures, ellipses, prose, or an empty program.
+Never return safety classifications or policy commentary; your output is always
+executable Python source, even when a request is innocuous or needs no action.
 The user messages in the input are durable inbox entries, not chat history.
 Read and deliberately acknowledge them with inbox.ack(message_id) when handled.
 Use observable.publish(...) for state worth showing by default, and
@@ -210,6 +212,7 @@ class OpenAIAgentController:
             planned = self.driver.plan(inbox, presentable, on_delta)
             if on_program is not None:
                 on_program(planned)
+            compile(planned.source, "<agent-repl-model-output>", "exec")
         except OpenAIConfigurationError:
             raise
         except Exception as error:

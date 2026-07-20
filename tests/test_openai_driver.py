@@ -90,6 +90,19 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("model_error", {value.name for value in session.observe()})
         self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
 
+    def test_non_python_model_output_is_rejected_before_kernel_evaluation(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Please handle this later.")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(client=FakeClient("User Safety: safe")))
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("SyntaxError", result.error)
+        runtime = next(value for value in session.observe() if value.name == "runtime")
+        self.assertEqual(runtime.value["status"], "idle")
+        self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
+
     def test_driver_streams_program_deltas_and_preserves_raw_program_log(self) -> None:
         source = "inbox.ack(inbox.pending()[0]['id'])\n"
         client = StreamClient(["```python\n", source, "```"])

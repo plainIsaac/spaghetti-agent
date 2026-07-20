@@ -22,6 +22,14 @@ def _format_state(session: SingleAgentSession) -> str:
     return "\n".join(f"{value.label or value.name}: {value.value}" for value in values)
 
 
+def _print_model_log(session: SingleAgentSession) -> None:
+    entries = session.model_program_log()
+    if not entries:
+        print("No model programs have been recorded.")
+        return
+    print(entries[-1]["raw_output"])
+
+
 def _render_default_presentation(session: SingleAgentSession, seen_message_ids: set[int]) -> None:
     print(_format_state(session))
     for message in session.user_messages():
@@ -105,8 +113,7 @@ def main() -> None:
                     print(f"{message.created_at.isoformat()} {message.sender} -> {message.recipient}: {message.text}")
                 continue
             if line == ":model-log":
-                for entry in session.model_program_log():
-                    print(entry["raw_output"])
+                _print_model_log(session)
                 continue
             if line == ":restart":
                 print(session.restart())

@@ -169,6 +169,7 @@ class ModelTurnWorker:
         with self._lock:
             if self._future is future:
                 self._future = None
+                self._phase = "completed"
         return result
 
     def close(self) -> None:
