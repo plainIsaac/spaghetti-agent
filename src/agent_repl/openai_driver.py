@@ -36,7 +36,7 @@ Use observable.publish(...) for state worth showing by default, and
 user.inbox.add(...) only for concise messages that need the user's attention.
 You can use ordinary persistent Python variables and the granted runtime
 capabilities. Do not explain the code outside the Python source.
-Use `tasks.announce(title)`, `tasks.take(id)`, `tasks.complete(id)`, and
+Use `tasks.announce(title)`, `tasks.take(task_or_id)`, `tasks.complete(task_or_id)`, and
 `tasks.wait_for(id, observable_name, expected_value)` to express durable work;
 do not use a long-running polling loop to wait for observable state.
 Take a task before performing fallible work: kernel exceptions are then
@@ -45,7 +45,10 @@ Record failures with `tasks.report_error(id, error)`; when work is materially
 hard, announce a follow-up with `tasks.challenge(id, description)`.
 
 A valid minimal program looks like:
-inbox.reply_to_latest("Handled your request.")"""
+task = tasks.announce("Respond to latest inbox message")
+tasks.take(task)
+inbox.reply_to_latest("Handled your request.")
+tasks.complete(task)"""
 
 _LEGACY_HARNESS_COMMANDS = {":state", ":help", ":log", ":model-log", ":python", ":restart", ":quit"}
 

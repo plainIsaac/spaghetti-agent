@@ -277,6 +277,17 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(journal.pending("agent"), [])
         self.assertEqual(journal.pending("user")[0].text, "Hello!")
 
+    def test_task_references_and_inbox_message_attributes_are_accepted(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Hello")
+
+        result = session.evaluate("task = tasks.announce('Respond')\ntasks.take(task)\nmessage = inbox.pending()[0]\n_result = (message.id, message.message_id, tasks.complete(task)['state'])")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value[0], result.value[1])
+        self.assertEqual(result.value[2], "completed")
+
     def test_restart_rehydrates_durable_state_and_reports_lost_kernel_locals(self) -> None:
         journal = InboxJournal()
         registry = ObservableStateRegistry()

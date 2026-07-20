@@ -19,6 +19,12 @@ from .tasks import TaskRegistry
 _STOP = object()
 
 
+def _task_id(value: Any) -> int:
+    if isinstance(value, dict):
+        value = value["id"]
+    return int(value)
+
+
 @dataclass(frozen=True)
 class RestartReport:
     """What a kernel restart restored and what it intentionally did not."""
@@ -218,27 +224,27 @@ class Supervisor:
             task = self.tasks.announce(agent, str(payload["title"]), payload.get("details"))
             return {"id": task.id, "state": task.state, "title": task.title}
         if kind == "tasks.take":
-            task = self.tasks.transition(agent, int(payload["task_id"]), "working")
+            task = self.tasks.transition(agent, _task_id(payload["task_id"]), "working")
             self._active_tasks[agent] = task.id
             return {"id": task.id, "state": task.state}
         if kind == "tasks.complete":
-            task = self.tasks.transition(agent, int(payload["task_id"]), "completed")
+            task = self.tasks.transition(agent, _task_id(payload["task_id"]), "completed")
             if self._active_tasks.get(agent) == task.id:
                 self._active_tasks.pop(agent, None)
             return {"id": task.id, "state": task.state}
         if kind == "tasks.wait_for":
-            task = self.tasks.wait_for(agent, int(payload["task_id"]), str(payload["name"]), payload.get("equals"))
+            task = self.tasks.wait_for(agent, _task_id(payload["task_id"]), str(payload["name"]), payload.get("equals"))
             return {"id": task.id, "state": task.state}
         if kind == "tasks.report_error":
-            return self.tasks.report_error(agent, int(payload["task_id"]), str(payload["error"]))
+            return self.tasks.report_error(agent, _task_id(payload["task_id"]), str(payload["error"]))
         if kind == "tasks.challenge":
-            task = self.tasks.challenge(agent, int(payload["task_id"]), str(payload["description"]))
+            task = self.tasks.challenge(agent, _task_id(payload["task_id"]), str(payload["description"]))
             return {"id": task.id, "state": task.state, "title": task.title}
         if kind == "tasks.schedule_after":
             seconds = float(payload["seconds"])
             if seconds < 0:
                 raise ValueError("seconds must be non-negative")
-            task = self.tasks.schedule(agent, int(payload["task_id"]), datetime.now(UTC) + timedelta(seconds=seconds))
+            task = self.tasks.schedule(agent, _task_id(payload["task_id"]), datetime.now(UTC) + timedelta(seconds=seconds))
             return {"id": task.id, "state": task.state, "due_at": task.due_at}
         if kind == "tasks.list":
             return [

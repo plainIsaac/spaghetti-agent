@@ -120,7 +120,7 @@ class KernelInbox:
         self._message_handler: Callable[[dict[str, Any]], None] | None = None
 
     def add_message(self, sender: str, text: str, message_id: int | None = None) -> None:
-        message = {"id": message_id, "sender": sender, "text": text}
+        message = InboxMessage(id=message_id, sender=sender, text=text)
         self._messages.append(message)
         if self._message_handler is not None:
             try:
@@ -161,6 +161,18 @@ class KernelInbox:
         if replied:
             self._messages = [item for item in self._messages if item["id"] != message["id"]]
         return replied
+
+
+class InboxMessage(dict[str, Any]):
+    """Inbox data usable with either Python attributes or mapping syntax."""
+
+    @property
+    def id(self) -> int | None:
+        return self["id"]
+
+    @property
+    def message_id(self) -> int | None:
+        return self["id"]
 
 
 class Observable:
@@ -215,22 +227,22 @@ class Tasks:
     def announce(self, title: str, details: Any = None) -> dict[str, Any]:
         return self._call_supervisor("tasks.announce", {"title": title, "details": details})
 
-    def take(self, task_id: int) -> dict[str, Any]:
+    def take(self, task_id: Any) -> dict[str, Any]:
         return self._call_supervisor("tasks.take", {"task_id": task_id})
 
-    def complete(self, task_id: int) -> dict[str, Any]:
+    def complete(self, task_id: Any) -> dict[str, Any]:
         return self._call_supervisor("tasks.complete", {"task_id": task_id})
 
-    def wait_for(self, task_id: int, name: str, equals: Any) -> dict[str, Any]:
+    def wait_for(self, task_id: Any, name: str, equals: Any) -> dict[str, Any]:
         return self._call_supervisor("tasks.wait_for", {"task_id": task_id, "name": name, "equals": equals})
 
-    def report_error(self, task_id: int, error: str) -> dict[str, Any]:
+    def report_error(self, task_id: Any, error: str) -> dict[str, Any]:
         return self._call_supervisor("tasks.report_error", {"task_id": task_id, "error": error})
 
-    def challenge(self, task_id: int, description: str) -> dict[str, Any]:
+    def challenge(self, task_id: Any, description: str) -> dict[str, Any]:
         return self._call_supervisor("tasks.challenge", {"task_id": task_id, "description": description})
 
-    def schedule_after(self, task_id: int, seconds: float) -> dict[str, Any]:
+    def schedule_after(self, task_id: Any, seconds: float) -> dict[str, Any]:
         return self._call_supervisor("tasks.schedule_after", {"task_id": task_id, "seconds": seconds})
 
     def list(self) -> list[dict[str, Any]]:
