@@ -48,6 +48,18 @@ class RuntimeSpikeTests(unittest.TestCase):
             "Repair integration", "Challenge: Repair integration", "Trouble: recurring error in task 1",
         ])
 
+    def test_kernel_failure_is_automatically_recorded_on_the_active_task(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        session.evaluate("task = tasks.announce('Parse input')\ntasks.take(task['id'])")
+        result = session.evaluate("raise ValueError('bad input')")
+
+        self.assertEqual(result.status, "error")
+        events = session.supervisor.tasks.events(1)
+        self.assertEqual(events[-1]["event"], "error")
+        self.assertIn("ValueError: bad input", events[-1]["details"]["error"])
+
     def test_non_collection_loops_have_a_default_budget_and_one_shot_override(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

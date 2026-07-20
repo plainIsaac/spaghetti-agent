@@ -37,6 +37,8 @@ capabilities. Do not explain the code outside the Python source.
 Use `tasks.announce(title)`, `tasks.take(id)`, `tasks.complete(id)`, and
 `tasks.wait_for(id, observable_name, expected_value)` to express durable work;
 do not use a long-running polling loop to wait for observable state.
+Take a task before performing fallible work: kernel exceptions are then
+automatically recorded against that task by the supervisor.
 Record failures with `tasks.report_error(id, error)`; when work is materially
 hard, announce a follow-up with `tasks.challenge(id, description)`.
 

@@ -73,6 +73,7 @@ class Supervisor:
         self._repls: dict[str, ReplQueue] = {}
         self._handlers: dict[str, Callable[[Message], None]] = {}
         self._kernels: dict[str, PersistentKernel] = {}
+        self._active_tasks: dict[str, int] = {}
 
     def create_repl(self, name: str) -> ReplQueue:
         if name in self._repls:
@@ -183,6 +184,10 @@ class Supervisor:
             },
             presenter="runtime",
         )
+        if state.status == "failed" and state.error is not None:
+            task_id = self._active_tasks.get(agent)
+            if task_id is not None:
+                self.tasks.report_error(agent, task_id, state.error)
 
     def _handle_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
         if kind == "inbox.ack":
@@ -201,9 +206,12 @@ class Supervisor:
             return {"id": task.id, "state": task.state, "title": task.title}
         if kind == "tasks.take":
             task = self.tasks.transition(agent, int(payload["task_id"]), "working")
+            self._active_tasks[agent] = task.id
             return {"id": task.id, "state": task.state}
         if kind == "tasks.complete":
             task = self.tasks.transition(agent, int(payload["task_id"]), "completed")
+            if self._active_tasks.get(agent) == task.id:
+                self._active_tasks.pop(agent, None)
             return {"id": task.id, "state": task.state}
         if kind == "tasks.wait_for":
             task = self.tasks.wait_for(agent, int(payload["task_id"]), str(payload["name"]), payload.get("equals"))
