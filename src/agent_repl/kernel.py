@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from multiprocessing import get_context
@@ -18,6 +20,86 @@ class KernelResult:
     status: str
     value: Any = None
     error: str | None = None
+
+
+DEFAULT_NON_COLLECTION_LOOP_LIMIT = 1_000
+
+
+class LoopLimitExceeded(RuntimeError):
+    """A non-collection loop exceeded its supervisor-visible execution budget."""
+
+
+class LoopBudget:
+    """One-shot loop budgets set by `loop_limit` before the next guarded loop."""
+
+    def __init__(self, default_limit: int = DEFAULT_NON_COLLECTION_LOOP_LIMIT) -> None:
+        self.default_limit = default_limit
+        self.next_limit: int | None = None
+        self.counts: dict[int, int] = {}
+        self.limits: dict[int, int] = {}
+
+    def set_next(self, limit: int) -> None:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("loop_limit expects a positive integer")
+        self.next_limit = limit
+
+    def guard_while(self, loop_id: int) -> None:
+        self._advance(loop_id)
+
+    def guarded_iterable(self, value: object, loop_id: int):
+        if isinstance(value, Collection):
+            return iter(value)
+        return _GuardedIterator(iter(value), lambda: self._advance(loop_id))
+
+    def _advance(self, loop_id: int) -> None:
+        count = self.counts.get(loop_id, 0) + 1
+        self.counts[loop_id] = count
+        if count == 1:
+            self.limits[loop_id] = self.next_limit if self.next_limit is not None else self.default_limit
+            self.next_limit = None
+        limit = self.limits[loop_id]
+        if count > limit:
+            raise LoopLimitExceeded(f"non-collection loop exceeded its {limit:,} iteration limit")
+
+
+class _GuardedIterator(Iterator[Any]):
+    def __init__(self, iterator: Iterator[Any], advance: Callable[[], None]) -> None:
+        self._iterator = iterator
+        self._advance = advance
+
+    def __next__(self) -> Any:
+        value = next(self._iterator)
+        self._advance()
+        return value
+
+
+class _LoopGuardTransformer(ast.NodeTransformer):
+    def __init__(self) -> None:
+        self._next_loop_id = 0
+
+    def _loop_id(self) -> int:
+        self._next_loop_id += 1
+        return self._next_loop_id
+
+    def visit_While(self, node: ast.While) -> ast.While:
+        self.generic_visit(node)
+        guard = ast.Expr(ast.Call(ast.Name("_agent_repl_guard_while", ast.Load()), [ast.Constant(self._loop_id())], []))
+        node.body.insert(0, ast.copy_location(guard, node))
+        return node
+
+    def visit_For(self, node: ast.For) -> ast.For:
+        self.generic_visit(node)
+        node.iter = ast.copy_location(
+            ast.Call(ast.Name("_agent_repl_guarded_iterable", ast.Load()), [node.iter, ast.Constant(self._loop_id())], []),
+            node.iter,
+        )
+        return node
+
+
+def _compile_agent_source(source: str) -> Any:
+    tree = ast.parse(source, "<agent-repl-kernel>", "exec")
+    tree = _LoopGuardTransformer().visit(tree)
+    return compile(ast.fix_missing_locations(tree), "<agent-repl-kernel>", "exec")
 
 
 @dataclass(frozen=True)
@@ -192,7 +274,11 @@ def _kernel_main(
             return response["value"]
 
     inbox = KernelInbox(call_supervisor)
+    loop_budget = LoopBudget()
     namespace: dict[str, Any] = {"__name__": "__agent_repl_kernel__", "inbox": inbox}
+    namespace["loop_limit"] = loop_budget.set_next
+    namespace["_agent_repl_guard_while"] = loop_budget.guard_while
+    namespace["_agent_repl_guarded_iterable"] = loop_budget.guarded_iterable
     if role == "agent":
         namespace["observable"] = Observable(call_supervisor)
         namespace["user"] = User(call_supervisor)
@@ -217,7 +303,9 @@ def _kernel_main(
         request_id = command["request_id"]
         try:
             namespace.pop("_result", None)
-            exec(compile(command["source"], "<agent-repl-kernel>", "exec"), namespace, namespace)
+            loop_budget.counts.clear()
+            loop_budget.limits.clear()
+            exec(_compile_agent_source(command["source"]), namespace, namespace)
             responses.put({"request_id": request_id, "status": "ok", "value": namespace.get("_result")})
         except BaseException as error:
             responses.put(

@@ -159,6 +159,15 @@ The initial working model is:
   inbox append is atomic.
 - A user message append and a later agent handler are distinct execution units.
 
+### Loop budgets
+
+The kernel applies a default 1,000-iteration budget to `while` loops and `for`
+loops over non-collection iterators. This catches accidental generators and
+unbounded control loops without limiting ordinary iteration over a collection
+such as `range`, lists, dictionaries, or strings. An agent may raise the budget
+for exactly the next guarded loop by putting `loop_limit(10_000)` immediately
+before that loop. This is an execution-safety guard, not a security sandbox.
+
 ## Durability, cancellation, and imports
 
 - Durable state is explicit: an event journal and snapshots for supported

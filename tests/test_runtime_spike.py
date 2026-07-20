@@ -11,6 +11,21 @@ from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry,
 
 
 class RuntimeSpikeTests(unittest.TestCase):
+    def test_non_collection_loops_have_a_default_budget_and_one_shot_override(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        limited = session.evaluate("while True:\n    pass")
+        raised = session.evaluate("loop_limit(3)\ncount = 0\nwhile count < 3:\n    count += 1\n_result = count")
+        collection = session.evaluate("count = 0\nfor _ in range(1_500):\n    count += 1\n_result = count")
+
+        self.assertEqual(limited.status, "error")
+        self.assertIn("LoopLimitExceeded", limited.error)
+        self.assertEqual(raised.status, "ok")
+        self.assertEqual(raised.value, 3)
+        self.assertEqual(collection.status, "ok")
+        self.assertEqual(collection.value, 1500)
+
     def test_message_is_durable_without_an_agent_handler(self) -> None:
         path = Path(self._testMethodName + ".sqlite")
         self.addCleanup(path.unlink, missing_ok=True)
