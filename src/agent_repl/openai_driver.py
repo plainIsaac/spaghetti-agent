@@ -100,7 +100,7 @@ class OpenAICompatibleAgentDriver:
         source = self._strip_code_fence(raw_output)
         if not source.strip():
             raise RuntimeError("OpenAI returned an empty agent program")
-        return PlannedTurn(source, request, raw_output, resolved_model)
+        return PlannedTurn(source, request, raw_output, resolved_model or self.model)
 
     @staticmethod
     def _read_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None]:

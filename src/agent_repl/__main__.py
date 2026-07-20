@@ -41,17 +41,17 @@ def _print_repl_log(session: SingleAgentSession) -> None:
         return
     for entry in entries:
         if entry["event"] == "model_program":
-            print("model -> repl:")
+            print(f"{entry['timestamp']} {entry.get('resolved_model') or 'model'} -> repl:")
             print(entry["source"])
         else:
-            print(f"repl -> supervisor: {entry['status']}" + (f" ({entry['error']})" if entry["error"] else ""))
+            print(f"{entry['timestamp']} repl -> supervisor: {entry['status']}" + (f" ({entry['error']})" if entry["error"] else ""))
 
 
 def _render_default_presentation(session: SingleAgentSession, seen_message_ids: set[int]) -> None:
     print(_format_state(session))
     for message in session.user_messages():
         if message.id not in seen_message_ids:
-            print(f"agent> {message.text}")
+            print(f"{session.user_message_label(message)}> {message.text}")
             seen_message_ids.add(message.id)
 
 

@@ -55,6 +55,11 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(DEFAULT_OPENROUTER_MODEL, "openrouter/free")
         self.assertEqual(client.responses.calls[0]["model"], "openrouter/free")
 
+    def test_plan_uses_configured_model_when_stream_does_not_report_resolution(self) -> None:
+        planned = OpenAIAgentDriver(model="test-model", client=FakeClient("_result = None")).plan([], {})
+
+        self.assertEqual(planned.resolved_model, "test-model")
+
     def test_driver_uses_current_state_without_a_transcript(self) -> None:
         source = (
             "message = inbox.pending()[0]\n"

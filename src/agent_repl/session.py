@@ -43,6 +43,7 @@ class SingleAgentSession:
         self.kernel = self.supervisor.start_agent_kernel(agent)
         self.user_kernel = self.supervisor.start_user_kernel(agent=agent)
         self._model_log_path = Path(model_log_path) if model_log_path else None
+        self._latest_model_name: str | None = None
 
     @classmethod
     def open(cls, inbox_path: str = ":memory:", observable_state_path: str = ":memory:", agent: str = "agent") -> "SingleAgentSession":
@@ -68,6 +69,9 @@ class SingleAgentSession:
 
     def user_messages(self) -> list[Message]:
         return self.supervisor.journal.pending("user")
+
+    def user_message_label(self, message: Message) -> str:
+        return self._latest_model_name or message.sender
 
     def conversation_log(self) -> list[Message]:
         return self.supervisor.journal.conversation("user", self.agent)
@@ -99,6 +103,7 @@ class SingleAgentSession:
         return result
 
     def _append_model_program(self, planned: "PlannedTurn") -> None:
+        self._latest_model_name = planned.resolved_model
         self._append_model_log_entry({
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": "model_program",
