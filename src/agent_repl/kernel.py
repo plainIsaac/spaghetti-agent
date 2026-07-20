@@ -206,6 +206,28 @@ class User:
         self.inbox = UserInbox(call_supervisor)
 
 
+class Tasks:
+    """Supervisor-owned durable task lifecycle for an agent REPL."""
+
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def announce(self, title: str, details: Any = None) -> dict[str, Any]:
+        return self._call_supervisor("tasks.announce", {"title": title, "details": details})
+
+    def take(self, task_id: int) -> dict[str, Any]:
+        return self._call_supervisor("tasks.take", {"task_id": task_id})
+
+    def complete(self, task_id: int) -> dict[str, Any]:
+        return self._call_supervisor("tasks.complete", {"task_id": task_id})
+
+    def wait_for(self, task_id: int, name: str, equals: Any) -> dict[str, Any]:
+        return self._call_supervisor("tasks.wait_for", {"task_id": task_id, "name": name, "equals": equals})
+
+    def list(self) -> list[dict[str, Any]]:
+        return self._call_supervisor("tasks.list", {})
+
+
 class PresentableState:
     """Read-only presentable state granted to the user's REPL."""
 
@@ -282,6 +304,7 @@ def _kernel_main(
     if role == "agent":
         namespace["observable"] = Observable(call_supervisor)
         namespace["user"] = User(call_supervisor)
+        namespace["tasks"] = Tasks(call_supervisor)
     elif role == "user":
         namespace["presentable"] = PresentableState(call_supervisor)
         namespace["agent"] = Agent(call_supervisor)

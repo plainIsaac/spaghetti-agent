@@ -11,6 +11,18 @@ from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry,
 
 
 class RuntimeSpikeTests(unittest.TestCase):
+    def test_agent_can_announce_take_and_wait_for_observable_task_state(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        created = session.evaluate("task = tasks.announce('Check deployment')\ntasks.take(task['id'])\n_result = tasks.wait_for(task['id'], 'deployment', 'ready')")
+        session.evaluate("observable.publish('deployment', 'ready')")
+
+        self.assertEqual(created.status, "ok")
+        self.assertEqual(created.value["state"], "waiting")
+        self.assertEqual(session.supervisor.tasks.list("agent")[0].state, "ready")
+        self.assertIn("Task 1 is ready", session.supervisor.journal.pending("agent")[0].text)
+
     def test_non_collection_loops_have_a_default_budget_and_one_shot_override(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

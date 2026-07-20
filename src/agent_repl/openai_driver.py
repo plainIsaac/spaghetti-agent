@@ -34,6 +34,9 @@ Use observable.publish(...) for state worth showing by default, and
 user.inbox.add(...) only for concise messages that need the user's attention.
 You can use ordinary persistent Python variables and the granted runtime
 capabilities. Do not explain the code outside the Python source.
+Use `tasks.announce(title)`, `tasks.take(id)`, `tasks.complete(id)`, and
+`tasks.wait_for(id, observable_name, expected_value)` to express durable work;
+do not use a long-running polling loop to wait for observable state.
 
 A valid minimal program looks like:
 inbox.reply_to_latest("Handled your request.")"""

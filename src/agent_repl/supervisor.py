@@ -12,6 +12,7 @@ from typing import Any
 from .journal import InboxJournal, Message
 from .kernel import ExecutionState, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
+from .tasks import TaskRegistry
 
 
 _STOP = object()
@@ -63,10 +64,12 @@ class ReplQueue:
 class Supervisor:
     """Coordinates explicit inbox sharing and schedules opt-in delivery."""
 
-    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None) -> None:
+    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None) -> None:
         self.journal = journal
         self._owns_observable_state = observable_state is None
         self.observable_state = observable_state or ObservableStateRegistry()
+        self.tasks = tasks or TaskRegistry()
+        self._owns_tasks = tasks is None
         self._repls: dict[str, ReplQueue] = {}
         self._handlers: dict[str, Callable[[Message], None]] = {}
         self._kernels: dict[str, PersistentKernel] = {}
@@ -159,7 +162,13 @@ class Supervisor:
         label: str | None = None,
         priority: int = 0,
     ) -> ObservableValue:
-        return self.observable_state.publish(owner, name, value, presenter, show_by_default, label, priority)
+        published = self.observable_state.publish(owner, name, value, presenter, show_by_default, label, priority)
+        for task in self.tasks.observe(owner, name, value):
+            message = self.journal.append(recipient=owner, sender="supervisor", text=f"Task {task.id} is ready: {task.title}")
+            kernel = self._kernels.get(owner)
+            if kernel is not None:
+                kernel.deliver(message)
+        return published
 
     def _publish_execution_state(self, agent: str, state: ExecutionState) -> None:
         self.publish_state(
@@ -187,6 +196,20 @@ class Supervisor:
             if user_kernel is not None:
                 user_kernel.deliver(message)
             return self.journal.acknowledge(agent, message_id)
+        if kind == "tasks.announce":
+            task = self.tasks.announce(agent, str(payload["title"]), payload.get("details"))
+            return {"id": task.id, "state": task.state, "title": task.title}
+        if kind == "tasks.take":
+            task = self.tasks.transition(agent, int(payload["task_id"]), "working")
+            return {"id": task.id, "state": task.state}
+        if kind == "tasks.complete":
+            task = self.tasks.transition(agent, int(payload["task_id"]), "completed")
+            return {"id": task.id, "state": task.state}
+        if kind == "tasks.wait_for":
+            task = self.tasks.wait_for(agent, int(payload["task_id"]), str(payload["name"]), payload.get("equals"))
+            return {"id": task.id, "state": task.state}
+        if kind == "tasks.list":
+            return [{"id": task.id, "title": task.title, "state": task.state, "details": task.details} for task in self.tasks.list(agent)]
         if kind == "inbox.handler_failed":
             self.publish_state(
                 agent,
@@ -269,3 +292,5 @@ class Supervisor:
             repl.close()
         if self._owns_observable_state:
             self.observable_state.close()
+        if self._owns_tasks:
+            self.tasks.close()

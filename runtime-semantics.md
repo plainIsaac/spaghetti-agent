@@ -168,6 +168,14 @@ such as `range`, lists, dictionaries, or strings. An agent may raise the budget
 for exactly the next guarded loop by putting `loop_limit(10_000)` immediately
 before that loop. This is an execution-safety guard, not a security sandbox.
 
+### Durable tasks and observable waits
+
+Tasks are supervisor-owned durable records. An agent can announce a task,
+choose to take it, complete it, or wait for a named observable value. Waiting
+does not consume a REPL loop: when the matching state is published, the
+supervisor marks the task `ready` and appends a durable wake-up message for the
+agent. Scheduling a new model evaluation from that message is the next layer.
+
 ## Durability, cancellation, and imports
 
 - Durable state is explicit: an event journal and snapshots for supported
