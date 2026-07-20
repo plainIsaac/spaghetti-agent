@@ -13,6 +13,7 @@ from .supervisor import Supervisor
 
 # Default to the current cost-sensitive tier for early runtime experiments.
 DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
+DEFAULT_OPENROUTER_MODEL = "openrouter/free"
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
 Return only Python source code to evaluate in that REPL; do not use Markdown.
@@ -40,12 +41,23 @@ class PlannedTurn:
     request: dict[str, Any]
 
 
-class OpenAIAgentDriver:
-    """Plans one agent evaluation through the OpenAI Responses API."""
+class OpenAICompatibleAgentDriver:
+    """Plans an agent evaluation through an OpenAI-compatible Responses API."""
 
-    def __init__(self, model: str = DEFAULT_OPENAI_MODEL, client: ResponsesClient | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        client: ResponsesClient | None = None,
+        *,
+        provider_name: str,
+        api_key_environment: str,
+        base_url: str | None = None,
+    ) -> None:
         self.model = model
         self._client = client
+        self.provider_name = provider_name
+        self.api_key_environment = api_key_environment
+        self.base_url = base_url
 
     def plan(self, inbox: list[dict[str, Any]], presentable: dict[str, Any]) -> PlannedTurn:
         request = {"inbox": inbox, "presentable": presentable}
@@ -62,15 +74,21 @@ class OpenAIAgentDriver:
     def _get_client(self) -> ResponsesClient:
         if self._client is not None:
             return self._client
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise OpenAIConfigurationError("Set OPENAI_API_KEY before enabling the OpenAI agent driver")
+        api_key = os.environ.get(self.api_key_environment)
+        if not api_key:
+            raise OpenAIConfigurationError(
+                f"Set {self.api_key_environment} before enabling the {self.provider_name} agent driver"
+            )
         try:
             from openai import OpenAI
         except ImportError as error:
             raise OpenAIConfigurationError(
-                "Install the optional OpenAI dependency: python -m pip install -e '.[openai]'"
+                "Install the optional OpenAI-compatible SDK: python -m pip install -e '.[openai]'"
             ) from error
-        self._client = OpenAI()
+        options: dict[str, Any] = {"api_key": api_key}
+        if self.base_url is not None:
+            options["base_url"] = self.base_url
+        self._client = OpenAI(**options)
         return self._client
 
     @staticmethod
@@ -84,10 +102,35 @@ class OpenAIAgentDriver:
         return stripped
 
 
+class OpenAIAgentDriver(OpenAICompatibleAgentDriver):
+    """OpenAI's native Responses API adapter."""
+
+    def __init__(self, model: str = DEFAULT_OPENAI_MODEL, client: ResponsesClient | None = None) -> None:
+        super().__init__(
+            model,
+            client,
+            provider_name="OpenAI",
+            api_key_environment="OPENAI_API_KEY",
+        )
+
+
+class OpenRouterAgentDriver(OpenAICompatibleAgentDriver):
+    """OpenRouter's OpenAI-compatible API, intended for low-cost smoke tests."""
+
+    def __init__(self, model: str = DEFAULT_OPENROUTER_MODEL, client: ResponsesClient | None = None) -> None:
+        super().__init__(
+            model,
+            client,
+            provider_name="OpenRouter",
+            api_key_environment="OPENROUTER_API_KEY",
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+
 class OpenAIAgentController:
     """Connects durable runtime state to a single OpenAI-planned agent turn."""
 
-    def __init__(self, supervisor: Supervisor, driver: OpenAIAgentDriver, agent: str = "agent") -> None:
+    def __init__(self, supervisor: Supervisor, driver: OpenAICompatibleAgentDriver, agent: str = "agent") -> None:
         self.supervisor = supervisor
         self.driver = driver
         self.agent = agent

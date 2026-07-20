@@ -5,7 +5,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .openai_driver import DEFAULT_OPENAI_MODEL, OpenAIAgentDriver, OpenAIConfigurationError
+from .openai_driver import (
+    DEFAULT_OPENAI_MODEL,
+    DEFAULT_OPENROUTER_MODEL,
+    OpenAIAgentDriver,
+    OpenAIConfigurationError,
+    OpenRouterAgentDriver,
+)
 from .session import SingleAgentSession
 
 
@@ -44,14 +50,19 @@ def main() -> None:
     turn_mode = parser.add_mutually_exclusive_group()
     turn_mode.add_argument("--demo", action="store_true", help="Run a deterministic demo agent turn after each normal message")
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
-    parser.add_argument("--model", default=DEFAULT_OPENAI_MODEL, help="OpenAI model used with --openai")
+    turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
+    parser.add_argument("--model", help="Provider model override")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
     session = SingleAgentSession.open(
         str(arguments.data_dir / "inbox.sqlite"),
         str(arguments.data_dir / "observable-state.sqlite"),
     )
-    openai_driver = OpenAIAgentDriver(arguments.model) if arguments.openai else None
+    model_driver = None
+    if arguments.openai:
+        model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL)
+    if arguments.openrouter:
+        model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL)
     print("Agent REPL. Enter a message. Use :python for user Python, :restart, or :quit.")
     seen_message_ids: set[int] = set()
     try:
@@ -73,12 +84,12 @@ def main() -> None:
             print("Queued for the agent.")
             if arguments.demo:
                 print(f"Demo agent processed {session.run_demo_turn()} message(s).")
-            if openai_driver is not None:
+            if model_driver is not None:
                 try:
-                    result = session.run_openai_turn(openai_driver)
-                    print(f"OpenAI agent evaluation: {result.status if result else 'no pending message'}")
+                    result = session.run_openai_turn(model_driver)
+                    print(f"Model agent evaluation: {result.status if result else 'no pending message'}")
                 except OpenAIConfigurationError as error:
-                    print(f"OpenAI setup required: {error}")
+                    print(f"Model setup required: {error}")
     finally:
         session.close()
 

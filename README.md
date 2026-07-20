@@ -131,6 +131,20 @@ chat transcript. The model returns Python source for the persistent agent REPL,
 where it can inspect state, acknowledge messages, publish presentation state,
 and intentionally message the user.
 
+## OpenRouter smoke tests
+
+OpenRouter is available through the same OpenAI-compatible adapter:
+
+```powershell
+$env:OPENROUTER_API_KEY = "..."
+agent-repl --openrouter
+```
+
+It defaults to `openrouter/free`, which selects from OpenRouter's available free
+models. Use it for cheap, non-deterministic smoke tests only; provider selection,
+availability, and rate limits can vary. Use `--model provider/model:free` to
+pin a specific free variant when reproducibility matters more than breadth.
+
 The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.
 The next spike must define which values receive a durable representation and how

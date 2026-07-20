@@ -31,7 +31,7 @@ class EntryPointTests(unittest.TestCase):
             ), patch.dict("os.environ", {}, clear=True), patch("sys.stdout", output):
                 main()
 
-        self.assertIn("OpenAI setup required: Set OPENAI_API_KEY", output.getvalue())
+        self.assertIn("Model setup required: Set OPENAI_API_KEY", output.getvalue())
 
 
 if __name__ == "__main__":

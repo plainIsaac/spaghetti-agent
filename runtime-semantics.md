@@ -70,6 +70,11 @@ transcript. The model produces Python source that is evaluated in the persistent
 agent REPL, where it can read more state through granted capabilities and choose
 what to persist or communicate.
 
+Model providers are adapters behind the same driver interface. Deterministic
+scripted drivers remain the baseline for runtime tests; low-cost or free hosted
+models are reserved for smoke tests, and stronger models are selected only when
+an evaluation demonstrates a need for them.
+
 ## State and inspection
 
 The runtime must not impose a fixed presentable-state ontology such as only
