@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
+from pathlib import Path
 import sqlite3
 import threading
 
@@ -20,10 +22,11 @@ class Message:
 class InboxJournal:
     """A small SQLite-backed journal for durable, explicitly shared messages."""
 
-    def __init__(self, path: str = ":memory:") -> None:
+    def __init__(self, path: str = ":memory:", debug_log_path: str | None = None) -> None:
         self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        self._debug_log_path = Path(debug_log_path) if debug_log_path is not None else None
         with self._connection:
             self._connection.execute(
                 """
@@ -61,7 +64,9 @@ class InboxJournal:
                 "INSERT INTO events (kind, subject, created_at) VALUES (?, ?, ?)",
                 ("inbox.message_added", f"{recipient}:{message_id}", created_at.isoformat()),
             )
-        return Message(message_id, recipient, sender, text, created_at)
+        message = Message(message_id, recipient, sender, text, created_at)
+        self._append_debug_log(message)
+        return message
 
     def pending(self, recipient: str) -> list[Message]:
         with self._lock:
@@ -69,6 +74,19 @@ class InboxJournal:
                 "SELECT id, recipient, sender, text, created_at FROM inbox_messages "
                 "WHERE recipient = ? AND consumed_at IS NULL ORDER BY id",
                 (recipient,),
+            ).fetchall()
+        return [self._to_message(row) for row in rows]
+
+    def conversation(self, first_party: str, second_party: str) -> list[Message]:
+        """Return the raw, append-only debug record for two conversation endpoints."""
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT id, recipient, sender, text, created_at FROM inbox_messages
+                WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)
+                ORDER BY id
+                """,
+                (first_party, second_party, second_party, first_party),
             ).fetchall()
         return [self._to_message(row) for row in rows]
 
@@ -102,6 +120,22 @@ class InboxJournal:
             text=str(row["text"]),
             created_at=datetime.fromisoformat(str(row["created_at"])),
         )
+
+    def _append_debug_log(self, message: Message) -> None:
+        """Write a human-portable debug mirror after durable SQLite persistence."""
+        if self._debug_log_path is None:
+            return
+        self._debug_log_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "event": "message",
+            "id": message.id,
+            "sender": message.sender,
+            "recipient": message.recipient,
+            "text": message.text,
+            "created_at": message.created_at.isoformat(),
+        }
+        with self._debug_log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(record) + "\n")
 
     def close(self) -> None:
         self._connection.close()

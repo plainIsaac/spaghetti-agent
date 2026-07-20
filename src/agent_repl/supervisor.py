@@ -220,11 +220,23 @@ class Supervisor:
         if kind == "agent_inbox.add":
             message = self.append_user_message(agent, str(payload["text"]))
             return self._message_data(message)
+        if kind == "conversation.messages":
+            return [self._conversation_data(message) for message in self.journal.conversation(user, agent)]
         raise ValueError(f"Capability is not granted: {kind}")
 
     @staticmethod
     def _message_data(message: Message) -> dict[str, Any]:
         return {"id": message.id, "sender": message.sender, "text": message.text}
+
+    @staticmethod
+    def _conversation_data(message: Message) -> dict[str, Any]:
+        return {
+            "id": message.id,
+            "sender": message.sender,
+            "recipient": message.recipient,
+            "text": message.text,
+            "created_at": message.created_at.isoformat(),
+        }
 
     def append_user_message(self, agent: str, text: str) -> Message:
         """Durably append first; any handler runs later in the agent REPL."""

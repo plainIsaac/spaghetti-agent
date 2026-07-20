@@ -74,7 +74,7 @@ def main() -> None:
         model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
-    print("Agent REPL. Enter a message. Use :python for user Python, :restart, or :quit.")
+    print("Agent REPL. Enter a message. Use :python, :log, :restart, or :quit.")
     seen_message_ids: set[int] = set()
     try:
         while True:
@@ -86,6 +86,10 @@ def main() -> None:
                 return
             if line == ":python":
                 _run_user_repl(session)
+                continue
+            if line == ":log":
+                for message in session.conversation_log():
+                    print(f"{message.created_at.isoformat()} {message.sender} -> {message.recipient}: {message.text}")
                 continue
             if line == ":restart":
                 print(session.restart())

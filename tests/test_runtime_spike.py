@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import tempfile
 import threading
 import time
 import unittest
@@ -214,6 +216,25 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(inspected.value[0]["runtime"]["status"], "completed")
         self.assertEqual(inspected.value[1], {"text": "Inspect the project structure.", "message_id": 1})
         self.assertEqual(inspected.value[2], [])
+
+    def test_debug_conversation_log_is_append_only_and_user_inspectable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            inbox_path = str(Path(directory) / "inbox.sqlite")
+            session = SingleAgentSession.open(inbox_path, str(Path(directory) / "state.sqlite"))
+            try:
+                session.send("Keep the raw conversation for debugging.")
+                session.run_demo_turn()
+                entries = session.conversation_log()
+                from_user_repl = session.user_evaluate("_result = conversation.messages()")
+            finally:
+                session.close()
+
+            with (Path(directory) / "conversation.jsonl").open(encoding="utf-8") as log_file:
+                file_entries = [json.loads(line) for line in log_file]
+
+        self.assertEqual([entry.sender for entry in entries], ["user", "agent"])
+        self.assertEqual([entry["sender"] for entry in file_entries], ["user", "agent"])
+        self.assertEqual(from_user_repl.value[0]["text"], "Keep the raw conversation for debugging.")
 
     def test_agent_can_opt_into_later_inbox_event_delivery(self) -> None:
         journal = InboxJournal()

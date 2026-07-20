@@ -144,6 +144,16 @@ class Agent:
         return self._call_supervisor("agent_inbox.add", {"text": text})
 
 
+class Conversation:
+    """The user REPL's optional raw-message debugging capability."""
+
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def messages(self) -> list[dict[str, Any]]:
+        return self._call_supervisor("conversation.messages", {})
+
+
 def _kernel_main(
     commands: Queue[Any],
     responses: Queue[Any],
@@ -174,6 +184,7 @@ def _kernel_main(
     elif role == "user":
         namespace["presentable"] = PresentableState(call_supervisor)
         namespace["agent"] = Agent(call_supervisor)
+        namespace["conversation"] = Conversation(call_supervisor)
     else:
         raise ValueError(f"Unknown kernel role: {role}")
     while True:

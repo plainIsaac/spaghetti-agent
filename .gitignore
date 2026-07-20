@@ -3,3 +3,4 @@ __pycache__/
 *.sqlite
 *.egg-info/
 .env
+.agent-repl/

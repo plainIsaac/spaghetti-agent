@@ -87,6 +87,12 @@ enter the user Python REPL, `:restart` to exercise recovery, or `:quit` to exit.
 A real model adapter belongs at the `evaluate` boundary; it should not alter the
 runtime's message or persistence semantics.
 
+For debugging, `:log` prints the raw user/agent message record. File-backed
+sessions also append the same local-only records to `conversation.jsonl` beside
+their SQLite state. This is an optional diagnostic mirror, not the agent's
+canonical context or a default UI surface. The user REPL exposes the same data
+through `conversation.messages()`.
+
 These commands are developer-harness controls only. The intended UI will render
 presentable state continuously, reserve ordinary input for natural-language
 messages, and provide a separate Python user REPL for specific inspection and

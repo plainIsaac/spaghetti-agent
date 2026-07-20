@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .journal import InboxJournal, Message
 from .kernel import KernelResult, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
@@ -35,7 +37,8 @@ class SingleAgentSession:
 
     @classmethod
     def open(cls, inbox_path: str = ":memory:", observable_state_path: str = ":memory:", agent: str = "agent") -> "SingleAgentSession":
-        journal = InboxJournal(inbox_path)
+        debug_log_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("conversation.jsonl"))
+        journal = InboxJournal(inbox_path, debug_log_path)
         observable_state = ObservableStateRegistry(observable_state_path)
         return cls(Supervisor(journal, observable_state), agent)
 
@@ -55,6 +58,9 @@ class SingleAgentSession:
 
     def user_messages(self) -> list[Message]:
         return self.supervisor.journal.pending("user")
+
+    def conversation_log(self) -> list[Message]:
+        return self.supervisor.journal.conversation("user", self.agent)
 
     def restart(self) -> RestartReport:
         self.kernel, report = self.supervisor.restart_agent_kernel(self.agent)
