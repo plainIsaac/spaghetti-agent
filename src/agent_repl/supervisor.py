@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 import queue
 import threading
 from typing import Any
@@ -74,6 +75,18 @@ class Supervisor:
         self._handlers: dict[str, Callable[[Message], None]] = {}
         self._kernels: dict[str, PersistentKernel] = {}
         self._active_tasks: dict[str, int] = {}
+        self._scheduler_running = threading.Event()
+        self._scheduler_running.set()
+        self._scheduler_thread = threading.Thread(target=self._schedule_due_tasks, name="task-scheduler", daemon=True)
+        self._scheduler_thread.start()
+
+    def _schedule_due_tasks(self) -> None:
+        while self._scheduler_running.wait(0.1):
+            for task in self.tasks.due(datetime.now(UTC)):
+                message = self.journal.append(recipient=task.owner, sender="supervisor", text=f"Task {task.id} is due: {task.title}")
+                kernel = self._kernels.get(task.owner)
+                if kernel is not None:
+                    kernel.deliver(message)
 
     def create_repl(self, name: str) -> ReplQueue:
         if name in self._repls:
@@ -221,6 +234,12 @@ class Supervisor:
         if kind == "tasks.challenge":
             task = self.tasks.challenge(agent, int(payload["task_id"]), str(payload["description"]))
             return {"id": task.id, "state": task.state, "title": task.title}
+        if kind == "tasks.schedule_after":
+            seconds = float(payload["seconds"])
+            if seconds < 0:
+                raise ValueError("seconds must be non-negative")
+            task = self.tasks.schedule(agent, int(payload["task_id"]), datetime.now(UTC) + timedelta(seconds=seconds))
+            return {"id": task.id, "state": task.state, "due_at": task.due_at}
         if kind == "tasks.list":
             return [
                 {"id": task.id, "title": task.title, "state": task.state, "details": task.details,
@@ -303,6 +322,8 @@ class Supervisor:
         self.journal.acknowledge(message.recipient, message.id)
 
     def close(self) -> None:
+        self._scheduler_running.clear()
+        self._scheduler_thread.join(timeout=1)
         for kernel in self._kernels.values():
             kernel.stop()
         for repl in self._repls.values():

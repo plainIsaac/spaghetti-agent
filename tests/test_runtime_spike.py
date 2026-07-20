@@ -60,6 +60,18 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(events[-1]["event"], "error")
         self.assertIn("ValueError: bad input", events[-1]["details"]["error"])
 
+    def test_supervisor_wakes_a_due_task_without_agent_polling(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        session.evaluate("task = tasks.announce('Check later')\n_result = tasks.schedule_after(task['id'], 0)")
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not session.supervisor.journal.pending("agent"):
+            time.sleep(0.02)
+
+        self.assertEqual(session.supervisor.tasks.list("agent")[0].state, "ready")
+        self.assertIn("Task 1 is due", session.supervisor.journal.pending("agent")[0].text)
+
     def test_non_collection_loops_have_a_default_budget_and_one_shot_override(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

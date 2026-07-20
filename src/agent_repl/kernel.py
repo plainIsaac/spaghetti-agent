@@ -230,6 +230,9 @@ class Tasks:
     def challenge(self, task_id: int, description: str) -> dict[str, Any]:
         return self._call_supervisor("tasks.challenge", {"task_id": task_id, "description": description})
 
+    def schedule_after(self, task_id: int, seconds: float) -> dict[str, Any]:
+        return self._call_supervisor("tasks.schedule_after", {"task_id": task_id, "seconds": seconds})
+
     def list(self) -> list[dict[str, Any]]:
         return self._call_supervisor("tasks.list", {})
 

@@ -22,6 +22,7 @@ class Task:
     taken_by: str | None = None
     taken_at: str | None = None
     completed_at: str | None = None
+    due_at: str | None = None
 
 
 class TaskRegistry:
@@ -32,7 +33,7 @@ class TaskRegistry:
                 id INTEGER PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL,
                 state TEXT NOT NULL, details TEXT NOT NULL, wait_name TEXT,
                 wait_equals TEXT, updated_at TEXT NOT NULL, announced_at TEXT,
-                taken_by TEXT, taken_at TEXT, completed_at TEXT)"""
+                taken_by TEXT, taken_at TEXT, completed_at TEXT, due_at TEXT)"""
         )
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS task_errors (
@@ -50,7 +51,7 @@ class TaskRegistry:
 
     def _add_missing_columns(self) -> None:
         existing = {row[1] for row in self._connection.execute("PRAGMA table_info(tasks)")}
-        for name in ("announced_at", "taken_by", "taken_at", "completed_at"):
+        for name in ("announced_at", "taken_by", "taken_at", "completed_at", "due_at"):
             if name not in existing:
                 self._connection.execute(f"ALTER TABLE tasks ADD COLUMN {name} TEXT")
 
@@ -65,7 +66,7 @@ class TaskRegistry:
         return self.get(int(cursor.lastrowid))  # type: ignore[return-value]
 
     def get(self, task_id: int) -> Task | None:
-        row = self._connection.execute("SELECT id,owner,title,state,details,wait_name,wait_equals,announced_at,taken_by,taken_at,completed_at FROM tasks WHERE id=?", (task_id,)).fetchone()
+        row = self._connection.execute("SELECT id,owner,title,state,details,wait_name,wait_equals,announced_at,taken_by,taken_at,completed_at,due_at FROM tasks WHERE id=?", (task_id,)).fetchone()
         return None if row is None else Task(*row[:4], json.loads(row[4]), row[5], json.loads(row[6]) if row[6] is not None else None, *row[7:])
 
     def list(self, owner: str) -> list[Task]:
@@ -133,6 +134,18 @@ class TaskRegistry:
         self._event(task_id, owner, "challenge_announced", {"challenge_task_id": challenge.id, "description": description}, datetime.now(UTC).isoformat())
         self._connection.commit()
         return challenge
+
+    def schedule(self, owner: str, task_id: int, due_at: datetime) -> Task:
+        task = self.transition(owner, task_id, "scheduled")
+        due = due_at.astimezone(UTC).isoformat()
+        self._connection.execute("UPDATE tasks SET due_at=? WHERE id=?", (due, task.id))
+        self._event(task.id, owner, "scheduled", {"due_at": due}, datetime.now(UTC).isoformat())
+        self._connection.commit()
+        return self.get(task.id)  # type: ignore[return-value]
+
+    def due(self, now: datetime) -> list[Task]:
+        rows = self._connection.execute("SELECT id FROM tasks WHERE state='scheduled' AND due_at<=?", (now.astimezone(UTC).isoformat(),)).fetchall()
+        return [self.transition(self.get(int(row[0])).owner, int(row[0]), "ready") for row in rows]  # type: ignore[union-attr]
 
     def _event(self, task_id: int, actor: str, event: str, details: Any, created_at: str) -> None:
         self._connection.execute(
