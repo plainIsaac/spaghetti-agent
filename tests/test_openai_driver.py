@@ -109,6 +109,16 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(runtime.value["status"], "idle")
         self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
 
+    def test_importing_a_runtime_global_is_rejected_before_kernel_evaluation(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Please handle this later.")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(client=FakeClient("import inbox")))
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("injected globals", result.error)
+
     def test_rejected_program_is_sent_back_as_explicit_model_feedback(self) -> None:
         client = FakeClient("User Safety: safe")
         session = SingleAgentSession.open()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ast
 import json
 import os
 import re
@@ -27,6 +28,8 @@ executable Python source, even when a request is innocuous or needs no action.
 The activation identifies why you were invoked. Durable inbox entries, task
 history, errors, observations, and prior messages are pulled through Python:
 use `inbox.pending()` and `context`, not assumed prompt snapshots.
+`inbox`, `tasks`, `context`, `observable`, `user`, `agents`, and `conflicts`
+are already injected REPL globals. Never import them as Python modules.
 If `model_feedback` is present, your previous program was rejected. Correct the
 specific error and return one replacement Python program; do not discuss it.
 For a concise response to the latest message, prefer inbox.reply_to_latest(text):
@@ -244,7 +247,7 @@ class OpenAIAgentController:
             planned = self.driver.plan(activation, model_feedback, on_delta)
             if on_program is not None:
                 on_program(planned)
-            compile(planned.source, "<agent-repl-model-output>", "exec")
+            self._validate_program(planned.source)
         except OpenAIConfigurationError:
             raise
         except Exception as error:
@@ -267,3 +270,13 @@ class OpenAIAgentController:
         if on_phase is not None:
             on_phase("executing")
         return self.supervisor.agent_kernel(self.agent).evaluate(planned.source)
+
+    @staticmethod
+    def _validate_program(source: str) -> None:
+        tree = ast.parse(source, "<agent-repl-model-output>", "exec")
+        runtime_globals = {"inbox", "tasks", "context", "observable", "user", "agents", "conflicts"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(alias.name.split(".")[0] in runtime_globals for alias in node.names):
+                raise ValueError("runtime APIs are injected globals; do not import them")
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in runtime_globals:
+                raise ValueError("runtime APIs are injected globals; do not import them")
