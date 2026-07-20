@@ -81,8 +81,8 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(session.user_messages()[0].text, "Handled your request.")
         request = client.responses.calls[0]
         self.assertEqual(request["model"], "test-model")
-        self.assertIn("Please assess this design.", request["input"])
-        self.assertNotIn("history", request["input"])
+        self.assertIn("\"message_id\"", request["input"])
+        self.assertNotIn("Please assess this design.", request["input"])
 
     def test_empty_model_program_is_presented_without_losing_the_message(self) -> None:
         session = SingleAgentSession.open()
@@ -135,7 +135,7 @@ class OpenAIDriverTests(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         request = client.responses.calls[0]["input"]
-        self.assertIn("Say hello.", request)
+        self.assertIn('"message_id": 2', request)
         self.assertNotIn(":help", request)
 
     def test_driver_uses_final_program_when_model_returns_multiple_fenced_alternatives(self) -> None:

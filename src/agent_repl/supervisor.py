@@ -246,6 +246,26 @@ class Supervisor:
                  "taken_by": task.taken_by, "taken_at": task.taken_at, "announced_at": task.announced_at}
                 for task in self.tasks.list(agent)
             ]
+        if kind == "context.tasks.get":
+            task = self.tasks.get(int(payload["task_id"]))
+            if task is None:
+                return None
+            return {"id": task.id, "owner": task.owner, "title": task.title, "state": task.state, "details": task.details,
+                    "taken_by": task.taken_by, "taken_at": task.taken_at, "announced_at": task.announced_at}
+        if kind == "context.tasks.events":
+            return self.tasks.events(int(payload["task_id"]))
+        if kind == "context.errors.for_task":
+            return self.tasks.errors(int(payload["task_id"]))
+        if kind == "context.errors.search":
+            return self.tasks.search_errors(str(payload["text"]))
+        if kind == "context.observations.get":
+            value = self.observable_state.get(agent, str(payload["name"]))
+            if value is None:
+                return None
+            return {"value": value.value, "revision": value.revision, "updated_at": value.updated_at.isoformat(), "presenter": value.presenter}
+        if kind == "context.messages.with_party":
+            party = str(payload["party"])
+            return [self._conversation_data(message) for message in self.journal.conversation(agent, party)]
         if kind == "inbox.handler_failed":
             self.publish_state(
                 agent,

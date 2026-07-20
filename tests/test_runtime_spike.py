@@ -28,6 +28,16 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual([event["event"] for event in session.supervisor.tasks.events(task.id)], ["announced", "working", "waiting", "ready"])
         self.assertIn("Task 1 is ready", session.supervisor.journal.pending("agent")[0].text)
 
+    def test_agent_python_can_pull_durable_context(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        session.evaluate("task = tasks.announce('Investigate parser')\ntasks.report_error(task['id'], 'ValueError: bad input')\nobservable.publish('deployment', 'ready')")
+        result = session.evaluate("_result = (context.tasks.get(1)['title'], context.errors.search('bad input')[0]['count'], context.observations.get('deployment')['value'])")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value, ("Investigate parser", 1, "ready"))
+
     def test_task_errors_create_challenges_and_promote_recurring_trouble(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

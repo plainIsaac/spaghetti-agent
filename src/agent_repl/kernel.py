@@ -237,6 +237,52 @@ class Tasks:
         return self._call_supervisor("tasks.list", {})
 
 
+class ContextTasks:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def get(self, task_id: int) -> dict[str, Any] | None:
+        return self._call_supervisor("context.tasks.get", {"task_id": task_id})
+
+    def events(self, task_id: int) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.tasks.events", {"task_id": task_id})
+
+    def errors(self, task_id: int) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.errors.for_task", {"task_id": task_id})
+
+
+class ContextErrors:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def search(self, text: str) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.errors.search", {"text": text})
+
+
+class ContextObservations:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def get(self, name: str) -> dict[str, Any] | None:
+        return self._call_supervisor("context.observations.get", {"name": name})
+
+
+class ContextMessages:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def with_party(self, party: str) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.messages.with_party", {"party": party})
+
+
+class Context:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self.tasks = ContextTasks(call_supervisor)
+        self.errors = ContextErrors(call_supervisor)
+        self.observations = ContextObservations(call_supervisor)
+        self.messages = ContextMessages(call_supervisor)
+
+
 class PresentableState:
     """Read-only presentable state granted to the user's REPL."""
 
@@ -314,6 +360,7 @@ def _kernel_main(
         namespace["observable"] = Observable(call_supervisor)
         namespace["user"] = User(call_supervisor)
         namespace["tasks"] = Tasks(call_supervisor)
+        namespace["context"] = Context(call_supervisor)
     elif role == "user":
         namespace["presentable"] = PresentableState(call_supervisor)
         namespace["agent"] = Agent(call_supervisor)

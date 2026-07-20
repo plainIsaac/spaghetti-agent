@@ -119,6 +119,23 @@ class TaskRegistry:
             for row in self._connection.execute("SELECT actor,event,details,created_at FROM task_events WHERE task_id=? ORDER BY id", (task_id,))
         ]
 
+    def errors(self, task_id: int) -> list[dict[str, Any]]:
+        return [
+            {"error": row[0], "count": row[1], "trouble_task_id": row[2], "last_at": row[3]}
+            for row in self._connection.execute("SELECT error,count,trouble_task_id,last_at FROM task_errors WHERE task_id=? ORDER BY last_at DESC", (task_id,))
+        ]
+
+    def search_errors(self, text: str, owner: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT e.task_id,e.error,e.count,e.trouble_task_id,e.last_at,t.title,t.owner FROM task_errors e JOIN tasks t ON t.id=e.task_id WHERE e.error LIKE ?"
+        parameters: list[Any] = [f"%{text}%"]
+        if owner is not None:
+            query += " AND t.owner=?"
+            parameters.append(owner)
+        return [
+            {"task_id": row[0], "error": row[1], "count": row[2], "trouble_task_id": row[3], "last_at": row[4], "task_title": row[5], "owner": row[6]}
+            for row in self._connection.execute(query + " ORDER BY e.last_at DESC", parameters)
+        ]
+
     def report_error(self, owner: str, task_id: int, error: str) -> dict[str, Any]:
         task = self.get(task_id)
         if task is None or task.owner != owner:

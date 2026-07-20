@@ -24,7 +24,9 @@ Your entire output must compile under Python exec. Never return placeholders,
 signatures, ellipses, prose, or an empty program.
 Never return safety classifications or policy commentary; your output is always
 executable Python source, even when a request is innocuous or needs no action.
-The user messages in the input are durable inbox entries, not chat history.
+The activation identifies why you were invoked. Durable inbox entries, task
+history, errors, observations, and prior messages are pulled through Python:
+use `inbox.pending()` and `context`, not assumed prompt snapshots.
 If `model_feedback` is present, your previous program was rejected. Correct the
 specific error and return one replacement Python program; do not discuss it.
 For a concise response to the latest message, prefer inbox.reply_to_latest(text):
@@ -88,14 +90,13 @@ class OpenAICompatibleAgentDriver:
 
     def plan(
         self,
-        inbox: list[dict[str, Any]],
-        presentable: dict[str, Any],
+        activation: list[dict[str, Any]],
+        model_feedback: dict[str, Any] | None,
         on_delta: Callable[[str], None] | None = None,
     ) -> PlannedTurn:
         request = {
-            "inbox": inbox,
-            "presentable": presentable,
-            "model_feedback": presentable.get("model_error"),
+            "activation": activation,
+            "model_feedback": model_feedback,
         }
         response = self._get_client().responses.create(
             model=self.model,
@@ -224,19 +225,20 @@ class OpenAIAgentController:
         on_phase: Callable[[str], None] | None = None,
     ) -> KernelResult | None:
         pending = self.supervisor.journal.pending(self.agent)
-        inbox = [
-            self.supervisor._message_data(message)
+        activation = [
+            {"kind": "inbox_message", "message_id": message.id, "sender": message.sender}
             for message in pending
             if message.text.strip() not in _LEGACY_HARNESS_COMMANDS
         ]
-        if not inbox:
+        if not activation:
             return None
-        presentable = {value.name: value.value for value in self.supervisor.observable_state.list(self.agent)}
+        feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
+        model_feedback = feedback_value.value if feedback_value is not None else None
         planned: PlannedTurn | None = None
         try:
             if on_phase is not None:
                 on_phase("planning")
-            planned = self.driver.plan(inbox, presentable, on_delta)
+            planned = self.driver.plan(activation, model_feedback, on_delta)
             if on_program is not None:
                 on_program(planned)
             compile(planned.source, "<agent-repl-model-output>", "exec")
