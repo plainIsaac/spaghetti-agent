@@ -10,6 +10,21 @@ from agent_repl.__main__ import main
 
 
 class EntryPointTests(unittest.TestCase):
+    def test_model_log_ignores_trailing_repl_result(self) -> None:
+        from agent_repl.__main__ import _print_model_log
+        from unittest.mock import Mock
+
+        output = StringIO()
+        session = Mock()
+        session.model_program_log.return_value = [
+            {"event": "model_program", "raw_output": "_result = None"},
+            {"event": "repl_result", "status": "ok"},
+        ]
+        with patch("sys.stdout", output):
+            _print_model_log(session)
+
+        self.assertEqual(output.getvalue(), "_result = None\n")
+
     def test_demo_entry_point_renders_default_state_and_agent_reply(self) -> None:
         output = StringIO()
         with tempfile.TemporaryDirectory() as directory:

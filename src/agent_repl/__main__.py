@@ -23,7 +23,7 @@ def _format_state(session: SingleAgentSession) -> str:
 
 
 def _print_model_log(session: SingleAgentSession) -> None:
-    entries = session.model_program_log()
+    entries = [entry for entry in session.model_program_log() if entry.get("event") == "model_program"]
     if not entries:
         print("No model programs have been recorded.")
         return
