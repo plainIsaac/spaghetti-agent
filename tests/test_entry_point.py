@@ -48,7 +48,7 @@ class EntryPointTests(unittest.TestCase):
                 main()
 
         rendered = output.getvalue()
-        self.assertIn("Queued for the agent.", rendered)
+        self.assertNotIn("Queued for the agent.", rendered)
         self.assertIn("latest_input:", rendered)
         self.assertIn("reply[agent]> Received your message", rendered)
 

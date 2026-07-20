@@ -166,16 +166,13 @@ def main() -> None:
                 continue
 
             session.send(line)
-            print("Queued for the agent.")
             if arguments.demo:
                 print(f"Demo agent processed {session.run_demo_turn()} message(s).")
             if model_driver is not None:
                 try:
                     model_driver.validate_configuration()
                     if worker is not None and not worker.request_turn():
-                        print("Model is already working; this message remains queued.")
-                    else:
-                        print("Model turn started; you can keep sending messages.")
+                        pass
                 except OpenAIConfigurationError as error:
                     print(f"Model setup required: {error}")
     finally:
