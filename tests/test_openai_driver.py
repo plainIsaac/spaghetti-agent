@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import json
 import unittest
 
 from agent_repl import OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
@@ -60,6 +61,19 @@ class OpenAIDriverTests(unittest.TestCase):
         planned = OpenAIAgentDriver(model="test-model", client=FakeClient("_result = None")).plan([], {})
 
         self.assertEqual(planned.resolved_model, "test-model")
+
+    def test_http_trace_records_stream_open_and_close_times(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "http.jsonl"
+            driver = OpenAIAgentDriver(client=FakeClient("_result = None"))
+            driver.set_http_log_path(str(path))
+            driver.plan([], None)
+            entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual([entry["event"] for entry in entries], ["stream_opened", "stream_closed"])
+        self.assertIn("opened_at", entries[1])
+        self.assertIn("closed_at", entries[1])
+        self.assertIn("duration_seconds", entries[1])
 
     def test_driver_uses_current_state_without_a_transcript(self) -> None:
         source = (

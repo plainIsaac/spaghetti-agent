@@ -118,13 +118,22 @@ class OpenAICompatibleAgentDriver:
             "activation": activation,
             "model_feedback": model_feedback,
         }
-        response = self._get_client().responses.create(
-            model=self.model,
-            instructions=_INSTRUCTIONS,
-            input=json.dumps(request),
-            stream=True,
-        )
-        raw_output, resolved_model = self._read_stream(response, on_delta)
+        opened = datetime.now(timezone.utc)
+        self._append_http_log({"timestamp": opened.isoformat(), "event": "stream_opened", "provider": self.provider_name, "model": self.model})
+        try:
+            response = self._get_client().responses.create(
+                model=self.model,
+                instructions=_INSTRUCTIONS,
+                input=json.dumps(request),
+                stream=True,
+            )
+            raw_output, resolved_model = self._read_stream(response, on_delta)
+        except Exception as error:
+            closed = datetime.now(timezone.utc)
+            self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds(), "error": f"{type(error).__name__}: {error}"})
+            raise
+        closed = datetime.now(timezone.utc)
+        self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds()})
         source = self._strip_code_fence(raw_output)
         if not source.strip():
             raise RuntimeError("OpenAI returned an empty agent program")
