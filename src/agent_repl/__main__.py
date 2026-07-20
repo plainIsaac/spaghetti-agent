@@ -111,6 +111,7 @@ def main() -> None:
     seen_message_ids: set[int] = set()
     seen_state_revisions: dict[str, int] = {}
     worker = ModelTurnWorker(session, model_driver) if model_driver is not None else None
+    agents_were_active = False
     try:
         while True:
             _render_default_presentation(session, seen_message_ids, seen_state_revisions)
@@ -124,6 +125,12 @@ def main() -> None:
                 phase, elapsed = worker.status()
                 if phase not in {"idle", "completed"}:
                     prompt = f"you [{phase} {elapsed:.1f}s]> "
+                    agents_were_active = True
+                elif agents_were_active:
+                    queued = len(session.supervisor.journal.pending("agent"))
+                    suffix = f"; {queued} message(s) remain queued" if queued else ""
+                    print(f"agents> idle — no model turns are running{suffix}.")
+                    agents_were_active = False
             line = input(prompt).strip()
             if not line:
                 continue
