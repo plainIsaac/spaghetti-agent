@@ -35,6 +35,8 @@ observable.publish("status", {"message_id": message["id"], "state": "handled"})
 inbox.ack(message["id"])
 user.inbox.add("Handled your request.")"""
 
+_LEGACY_HARNESS_COMMANDS = {":state", ":help", ":log", ":model-log", ":python", ":restart", ":quit"}
+
 
 class ResponsesClient(Protocol):
     class responses(Protocol):
@@ -202,7 +204,12 @@ class OpenAIAgentController:
         on_program: Callable[[PlannedTurn], None] | None = None,
         on_phase: Callable[[str], None] | None = None,
     ) -> KernelResult | None:
-        inbox = [self.supervisor._message_data(message) for message in self.supervisor.journal.pending(self.agent)]
+        pending = self.supervisor.journal.pending(self.agent)
+        inbox = [
+            self.supervisor._message_data(message)
+            for message in pending
+            if message.text.strip() not in _LEGACY_HARNESS_COMMANDS
+        ]
         if not inbox:
             return None
         presentable = {value.name: value.value for value in self.supervisor.observable_state.list(self.agent)}

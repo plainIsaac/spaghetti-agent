@@ -30,6 +30,10 @@ def _print_model_log(session: SingleAgentSession) -> None:
     print(entries[-1]["raw_output"])
 
 
+def _print_help() -> None:
+    print("Type a normal message for the agent. :state shows presentable state; :python opens inspection; :log and :model-log show debug logs.")
+
+
 def _render_default_presentation(session: SingleAgentSession, seen_message_ids: set[int]) -> None:
     print(_format_state(session))
     for message in session.user_messages():
@@ -82,7 +86,7 @@ def main() -> None:
         model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
-    print("Agent REPL. Enter a message. Use :python, :state, :log, :model-log, :restart, or :quit.")
+    print("Agent REPL. Enter a message. Use :help for controls.")
     seen_message_ids: set[int] = set()
     worker = ModelTurnWorker(session, model_driver) if model_driver is not None else None
     try:
@@ -102,6 +106,9 @@ def main() -> None:
                 continue
             if line == ":quit":
                 return
+            if line == ":help":
+                _print_help()
+                continue
             if line == ":python":
                 _run_user_repl(session)
                 continue

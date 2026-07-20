@@ -103,6 +103,21 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(runtime.value["status"], "idle")
         self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
 
+    def test_legacy_console_commands_do_not_enter_model_context(self) -> None:
+        source = "inbox.ack(inbox.pending()[-1]['id'])\n"
+        client = FakeClient(source)
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send(":help")
+        session.send("Say hello.")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(client=client))
+
+        self.assertEqual(result.status, "ok")
+        request = client.responses.calls[0]["input"]
+        self.assertIn("Say hello.", request)
+        self.assertNotIn(":help", request)
+
     def test_driver_streams_program_deltas_and_preserves_raw_program_log(self) -> None:
         source = "inbox.ack(inbox.pending()[0]['id'])\n"
         client = StreamClient(["```python\n", source, "```"])
