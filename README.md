@@ -120,7 +120,7 @@ Install the optional SDK and set an API key before using the live driver:
 
 ```powershell
 python -m pip install -e ".[openai]"
-$env:OPENAI_API_KEY = "..."
+# Add OPENAI_API_KEY=... to .env
 agent-repl --openai
 ```
 
@@ -136,7 +136,7 @@ and intentionally message the user.
 OpenRouter is available through the same OpenAI-compatible adapter:
 
 ```powershell
-$env:OPENROUTER_API_KEY = "..."
+# Add OPENROUTER_API_KEY=... to .env
 agent-repl --openrouter
 ```
 
@@ -144,6 +144,8 @@ It defaults to `openrouter/free`, which selects from OpenRouter's available free
 models. Use it for cheap, non-deterministic smoke tests only; provider selection,
 availability, and rate limits can vary. Use `--model provider/model:free` to
 pin a specific free variant when reproducibility matters more than breadth.
+Provider requests default to a 30-second timeout with no automatic retry; adjust
+the limit deliberately with `--request-timeout` when a model warrants it.
 
 The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.

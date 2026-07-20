@@ -4,7 +4,11 @@ from types import SimpleNamespace
 import unittest
 
 from agent_repl import OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
-from agent_repl.openai_driver import DEFAULT_OPENAI_MODEL, DEFAULT_OPENROUTER_MODEL
+from agent_repl.openai_driver import (
+    DEFAULT_OPENAI_MODEL,
+    DEFAULT_OPENROUTER_MODEL,
+    DEFAULT_REQUEST_TIMEOUT_SECONDS,
+)
 
 
 class FakeResponses:
@@ -25,6 +29,7 @@ class FakeClient:
 class OpenAIDriverTests(unittest.TestCase):
     def test_default_model_is_the_cost_sensitive_experiment_tier(self) -> None:
         self.assertEqual(DEFAULT_OPENAI_MODEL, "gpt-5.6-luna")
+        self.assertEqual(DEFAULT_REQUEST_TIMEOUT_SECONDS, 30.0)
 
     def test_openrouter_uses_the_free_router_by_default(self) -> None:
         client = FakeClient("_result = None")
@@ -55,6 +60,18 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(request["model"], "test-model")
         self.assertIn("Please assess this design.", request["input"])
         self.assertNotIn("history", request["input"])
+
+    def test_empty_model_program_is_presented_without_losing_the_message(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Please handle this later.")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(client=FakeClient("")))
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("empty agent program", result.error)
+        self.assertIn("model_error", {value.name for value in session.observe()})
+        self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
 
 
 if __name__ == "__main__":

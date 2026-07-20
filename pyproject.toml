@@ -5,7 +5,7 @@ description = "Runtime-semantics spike for Agent REPL"
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-openai = ["openai>=1.0"]
+openai = ["openai>=1.0", "python-dotenv>=1.0"]
 
 [project.scripts]
 agent-repl = "agent_repl.__main__:main"

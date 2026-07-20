@@ -44,7 +44,17 @@ def _run_user_repl(session: SingleAgentSession) -> None:
             print(result.error)
 
 
+def _load_project_environment() -> None:
+    """Load a local .env when the optional provider dependencies are installed."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv()
+
+
 def main() -> None:
+    _load_project_environment()
     parser = argparse.ArgumentParser(description="Agent REPL single-agent session")
     parser.add_argument("--data-dir", type=Path, default=Path(".agent-repl"), help="Directory for durable session state")
     turn_mode = parser.add_mutually_exclusive_group()
@@ -52,6 +62,7 @@ def main() -> None:
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
     parser.add_argument("--model", help="Provider model override")
+    parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider request timeout in seconds")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
     session = SingleAgentSession.open(
@@ -60,9 +71,9 @@ def main() -> None:
     )
     model_driver = None
     if arguments.openai:
-        model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL)
+        model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
-        model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL)
+        model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
     print("Agent REPL. Enter a message. Use :python for user Python, :restart, or :quit.")
     seen_message_ids: set[int] = set()
     try:
