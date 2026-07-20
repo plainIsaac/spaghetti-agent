@@ -7,6 +7,8 @@ import ast
 import json
 import os
 import re
+from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from .kernel import KernelResult
@@ -93,6 +95,18 @@ class OpenAICompatibleAgentDriver:
         self.api_key_environment = api_key_environment
         self.base_url = base_url
         self.request_timeout = request_timeout
+        self._http_log_path: Path | None = None
+
+    def set_http_log_path(self, path: str) -> None:
+        """Enable a local, redacted provider HTTP trace for debugging."""
+        self._http_log_path = Path(path)
+
+    def _append_http_log(self, entry: dict[str, Any]) -> None:
+        if self._http_log_path is None:
+            return
+        self._http_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._http_log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(entry, default=str) + "\n")
 
     def plan(
         self,
@@ -161,6 +175,27 @@ class OpenAICompatibleAgentDriver:
         }
         if self.base_url is not None:
             options["base_url"] = self.base_url
+        if self._http_log_path is not None:
+            try:
+                import httpx
+            except ImportError:
+                pass
+            else:
+                def log_request(request: Any) -> None:
+                    headers = {key: ("[redacted]" if key.lower() == "authorization" else value) for key, value in request.headers.items()}
+                    self._append_http_log({
+                        "timestamp": datetime.now(timezone.utc).isoformat(), "event": "request",
+                        "method": request.method, "url": str(request.url), "headers": headers,
+                        "body": request.content.decode("utf-8", errors="replace"),
+                    })
+
+                def log_response(response: Any) -> None:
+                    self._append_http_log({
+                        "timestamp": datetime.now(timezone.utc).isoformat(), "event": "response",
+                        "method": response.request.method, "url": str(response.request.url), "status_code": response.status_code,
+                    })
+
+                options["http_client"] = httpx.Client(event_hooks={"request": [log_request], "response": [log_response]})
         self._client = OpenAI(**options)
         return self._client
 

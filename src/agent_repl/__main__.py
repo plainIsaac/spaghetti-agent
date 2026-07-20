@@ -31,7 +31,7 @@ def _print_model_log(session: SingleAgentSession) -> None:
 
 
 def _print_help() -> None:
-    print("Type a normal message for the agent. State is shown only when it changes; :state shows the current snapshot. :python opens inspection; :log, :model-log, and :repl-log show debug logs.")
+    print("Type a normal message for the agent. State is shown only when it changes; :state shows the current snapshot. :python opens inspection; :log, :model-log, :repl-log, and :http-log show debug logs.")
 
 
 def _print_repl_log(session: SingleAgentSession) -> None:
@@ -107,6 +107,8 @@ def main() -> None:
         model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
+    if model_driver is not None:
+        model_driver.set_http_log_path(str(arguments.data_dir / "provider-http.jsonl"))
     print("Agent REPL. Send a message; the agent may continue independently. Use :help for controls.")
     seen_message_ids: set[int] = set()
     seen_state_revisions: dict[str, int] = {}
@@ -154,6 +156,10 @@ def main() -> None:
                 continue
             if line == ":repl-log":
                 _print_repl_log(session)
+                continue
+            if line == ":http-log":
+                path = arguments.data_dir / "provider-http.jsonl"
+                print(path.read_text(encoding="utf-8") if path.exists() else "No provider HTTP requests have been recorded.")
                 continue
             if line == ":restart":
                 print(session.restart())
