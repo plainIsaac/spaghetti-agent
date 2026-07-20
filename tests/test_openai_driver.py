@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from agent_repl import OpenAIAgentDriver, SingleAgentSession
+from agent_repl.openai_driver import DEFAULT_OPENAI_MODEL
 
 
 class FakeResponses:
@@ -22,6 +23,9 @@ class FakeClient:
 
 
 class OpenAIDriverTests(unittest.TestCase):
+    def test_default_model_is_the_cost_sensitive_experiment_tier(self) -> None:
+        self.assertEqual(DEFAULT_OPENAI_MODEL, "gpt-5.6-luna")
+
     def test_driver_uses_current_state_without_a_transcript(self) -> None:
         source = (
             "message = inbox.pending()[0]\n"

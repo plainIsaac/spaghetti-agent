@@ -124,8 +124,8 @@ $env:OPENAI_API_KEY = "..."
 agent-repl --openai
 ```
 
-The OpenAI integration uses the Responses API. Its default is
-`gpt-5.6-terra`, which can be replaced with `--model`. Each turn sends the
+The OpenAI integration uses the Responses API. Its default is the
+cost-sensitive `gpt-5.6-luna`, which can be replaced with `--model`. Each turn sends the
 current durable agent inbox and explicitly published state; it does not replay a
 chat transcript. The model returns Python source for the persistent agent REPL,
 where it can inspect state, acknowledge messages, publish presentation state,

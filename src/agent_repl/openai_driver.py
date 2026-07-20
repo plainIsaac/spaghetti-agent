@@ -11,7 +11,8 @@ from .kernel import KernelResult
 from .supervisor import Supervisor
 
 
-DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
+# Default to the current cost-sensitive tier for early runtime experiments.
+DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
 Return only Python source code to evaluate in that REPL; do not use Markdown.
