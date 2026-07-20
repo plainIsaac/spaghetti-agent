@@ -54,8 +54,8 @@ class OpenAIDriverTests(unittest.TestCase):
         client = FakeClient("_result = None")
         driver = OpenRouterAgentDriver(client=client)
         driver.plan([], {})
-        self.assertEqual(DEFAULT_OPENROUTER_MODEL, "openrouter/free")
-        self.assertEqual(client.responses.calls[0]["model"], "openrouter/free")
+        self.assertEqual(DEFAULT_OPENROUTER_MODEL, "nvidia/nemotron-3-super-120b-a12b:free")
+        self.assertEqual(client.responses.calls[0]["model"], "nvidia/nemotron-3-super-120b-a12b:free")
 
     def test_plan_uses_configured_model_when_stream_does_not_report_resolution(self) -> None:
         planned = OpenAIAgentDriver(model="test-model", client=FakeClient("_result = None")).plan([], {})
@@ -91,7 +91,7 @@ class OpenAIDriverTests(unittest.TestCase):
         result = session.run_openai_turn(driver)
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(session.observe()[0].name, "result")
+        self.assertIn("result", {value.name for value in session.observe()})
         self.assertEqual(session.user_messages()[0].text, "Handled your request.")
         request = client.responses.calls[0]
         self.assertEqual(request["model"], "test-model")
@@ -146,6 +146,20 @@ class OpenAIDriverTests(unittest.TestCase):
         feedback = __import__("json").loads(client.responses.calls[1]["input"])["model_feedback"]
         self.assertEqual(feedback["rejected_output"], "User Safety: safe")
         self.assertIn("SyntaxError", feedback["error"])
+
+    def test_successful_program_clears_prior_model_feedback(self) -> None:
+        client = FakeClient("User Safety: safe")
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Please handle this later.")
+        session.run_openai_turn(OpenAIAgentDriver(client=client))
+        client.responses.output_text = "inbox.ack(inbox.pending()[0]['id'])"
+        session.run_openai_turn(OpenAIAgentDriver(client=client))
+        session.send("One more thing.")
+        session.run_openai_turn(OpenAIAgentDriver(client=client))
+
+        request = __import__("json").loads(client.responses.calls[2]["input"])
+        self.assertIsNone(request["model_feedback"])
 
     def test_legacy_console_commands_do_not_enter_model_context(self) -> None:
         source = "inbox.ack(inbox.pending()[-1]['id'])\n"

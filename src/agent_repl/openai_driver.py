@@ -17,7 +17,7 @@ from .supervisor import Supervisor
 
 # Default to the current cost-sensitive tier for early runtime experiments.
 DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
-DEFAULT_OPENROUTER_MODEL = "openrouter/free"
+DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
@@ -37,6 +37,8 @@ specific error and return one replacement Python program; do not discuss it.
 For a concise response to the latest message, prefer inbox.reply_to_latest(text):
 it queues the user reply and acknowledges that message in one runtime operation.
 Use explicit inbox.ack(message_id) only when you intentionally do not reply.
+Never bulk-ack user messages merely to clear the inbox. Leave unrelated
+messages pending, or create/take a task that records why they are handled.
 Use observable.publish(...) for state worth showing by default, and
 user.inbox.add(...) only for concise messages that need the user's attention.
 You can use ordinary persistent Python variables and the granted runtime
@@ -283,7 +285,7 @@ class OpenAIAgentController:
         if not activation:
             return None
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
-        model_feedback = feedback_value.value if feedback_value is not None else None
+        model_feedback = feedback_value.value if feedback_value is not None and feedback_value.value.get("active") else None
         planned: PlannedTurn | None = None
         try:
             if on_phase is not None:
@@ -296,6 +298,7 @@ class OpenAIAgentController:
             raise
         except Exception as error:
             feedback: dict[str, Any] = {
+                "active": True,
                 "error": f"{type(error).__name__}: {error}",
                 "instruction": "Your previous output was rejected. Return one valid Python program only.",
             }
@@ -313,7 +316,16 @@ class OpenAIAgentController:
             return KernelResult("error", error=f"{type(error).__name__}: {error}")
         if on_phase is not None:
             on_phase("executing")
-        return self.supervisor.agent_kernel(self.agent).evaluate(planned.source)
+        result = self.supervisor.agent_kernel(self.agent).evaluate(planned.source)
+        if result.status == "ok":
+            self.supervisor.publish_state(
+                self.agent,
+                "model_error",
+                {"active": False, "status": "resolved"},
+                presenter="error",
+                show_by_default=False,
+            )
+        return result
 
     @staticmethod
     def _validate_program(source: str) -> None:
