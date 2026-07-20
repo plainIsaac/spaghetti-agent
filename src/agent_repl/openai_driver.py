@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
 from typing import Any, Callable, Protocol
 
 from .kernel import KernelResult
@@ -17,7 +18,8 @@ DEFAULT_OPENROUTER_MODEL = "openrouter/free"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
-Return only Python source code to evaluate in that REPL; do not use Markdown.
+Return only Python source code to evaluate in that REPL; do not use Markdown
+or ``` code fences. Do not offer multiple alternative programs.
 Your entire output must compile under Python exec. Never return placeholders,
 signatures, ellipses, prose, or an empty program.
 Never return safety classifications or policy commentary; your output is always
@@ -145,11 +147,11 @@ class OpenAICompatibleAgentDriver:
     @staticmethod
     def _strip_code_fence(source: str) -> str:
         stripped = source.strip()
-        if not stripped.startswith("```"):
-            return stripped
-        lines = stripped.splitlines()
-        if len(lines) >= 2 and lines[-1].strip() == "```":
-            return "\n".join(lines[1:-1]).strip()
+        blocks = re.findall(r"```(?:python)?[ \t]*\r?\n(.*?)```", stripped, flags=re.IGNORECASE | re.DOTALL)
+        if blocks:
+            # Cheap models sometimes emit alternatives. Execute only the final
+            # complete block, which is their most recent proposed program.
+            return blocks[-1].strip()
         return stripped
 
 

@@ -118,6 +118,15 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("Say hello.", request)
         self.assertNotIn(":help", request)
 
+    def test_driver_uses_final_program_when_model_returns_multiple_fenced_alternatives(self) -> None:
+        first = "inbox.ack(inbox.pending()[0]['id'])"
+        final = "user.inbox.add('Hello, OS user!')\ninbox.ack(inbox.pending()[0]['id'])"
+        driver = OpenAIAgentDriver(client=FakeClient(f"```python\n{first}\n```\n\n```python\n{final}\n```"))
+
+        planned = driver.plan([], {})
+
+        self.assertEqual(planned.source, final)
+
     def test_driver_streams_program_deltas_and_preserves_raw_program_log(self) -> None:
         source = "inbox.ack(inbox.pending()[0]['id'])\n"
         client = StreamClient(["```python\n", source, "```"])
