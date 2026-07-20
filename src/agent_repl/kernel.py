@@ -65,6 +65,21 @@ class KernelInbox:
             self._messages = [message for message in self._messages if message["id"] != message_id]
         return acknowledged
 
+    def reply_to_latest(self, text: str) -> bool:
+        """Reply to and acknowledge the newest pending message in one operation."""
+        if not self._messages:
+            return False
+        message = self._messages[-1]
+        replied = bool(
+            self._call_supervisor(
+                "inbox.reply_to_latest",
+                {"message_id": message["id"], "text": str(text)},
+            )
+        )
+        if replied:
+            self._messages = [item for item in self._messages if item["id"] != message["id"]]
+        return replied
+
 
 class Observable:
     """The agent's explicit, presentable-state publishing capability."""

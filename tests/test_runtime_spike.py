@@ -158,6 +158,24 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(journal.pending("agent"), [])
         self.assertEqual(journal.pending("user")[0].text, "I have started investigating.")
 
+    def test_agent_can_reply_to_latest_in_one_durable_operation(self) -> None:
+        journal = InboxJournal()
+        registry = ObservableStateRegistry()
+        self.addCleanup(journal.close)
+        self.addCleanup(registry.close)
+        supervisor = Supervisor(journal, registry)
+        self.addCleanup(supervisor.close)
+        supervisor.create_repl("agent")
+        supervisor.append_user_message("agent", "Say hello.")
+        kernel = supervisor.start_agent_kernel("agent")
+
+        result = kernel.evaluate("_result = inbox.reply_to_latest('Hello!')")
+
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(result.value)
+        self.assertEqual(journal.pending("agent"), [])
+        self.assertEqual(journal.pending("user")[0].text, "Hello!")
+
     def test_restart_rehydrates_durable_state_and_reports_lost_kernel_locals(self) -> None:
         journal = InboxJournal()
         registry = ObservableStateRegistry()

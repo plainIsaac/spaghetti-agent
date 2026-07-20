@@ -105,6 +105,7 @@ class SingleAgentSession:
             "raw_output": planned.raw_output,
             "source": planned.source,
             "request": planned.request,
+            "resolved_model": planned.resolved_model,
         })
 
     def _append_repl_result(self, result: KernelResult | None) -> None:

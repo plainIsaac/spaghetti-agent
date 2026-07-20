@@ -27,17 +27,16 @@ executable Python source, even when a request is innocuous or needs no action.
 The user messages in the input are durable inbox entries, not chat history.
 If `model_feedback` is present, your previous program was rejected. Correct the
 specific error and return one replacement Python program; do not discuss it.
-Read and deliberately acknowledge them with inbox.ack(message_id) when handled.
+For a concise response to the latest message, prefer inbox.reply_to_latest(text):
+it queues the user reply and acknowledges that message in one runtime operation.
+Use explicit inbox.ack(message_id) only when you intentionally do not reply.
 Use observable.publish(...) for state worth showing by default, and
 user.inbox.add(...) only for concise messages that need the user's attention.
 You can use ordinary persistent Python variables and the granted runtime
 capabilities. Do not explain the code outside the Python source.
 
 A valid minimal program looks like:
-message = inbox.pending()[0]
-observable.publish("status", {"message_id": message["id"], "state": "handled"})
-inbox.ack(message["id"])
-user.inbox.add("Handled your request.")"""
+inbox.reply_to_latest("Handled your request.")"""
 
 _LEGACY_HARNESS_COMMANDS = {":state", ":help", ":log", ":model-log", ":python", ":restart", ":quit"}
 
@@ -57,6 +56,7 @@ class PlannedTurn:
     source: str
     request: dict[str, Any]
     raw_output: str
+    resolved_model: str | None = None
 
 
 class OpenAICompatibleAgentDriver:
@@ -96,22 +96,26 @@ class OpenAICompatibleAgentDriver:
             input=json.dumps(request),
             stream=True,
         )
-        raw_output = self._read_stream(response, on_delta)
+        raw_output, resolved_model = self._read_stream(response, on_delta)
         source = self._strip_code_fence(raw_output)
         if not source.strip():
             raise RuntimeError("OpenAI returned an empty agent program")
-        return PlannedTurn(source, request, raw_output)
+        return PlannedTurn(source, request, raw_output, resolved_model)
 
     @staticmethod
-    def _read_stream(response: Any, on_delta: Callable[[str], None] | None) -> str:
+    def _read_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None]:
         # The small compatibility path keeps injected test clients usable.
         if hasattr(response, "output_text"):
             text = str(response.output_text)
             if on_delta is not None and text:
                 on_delta(text)
-            return text
+            return text, getattr(response, "model", None)
         parts: list[str] = []
+        resolved_model: str | None = None
         for event in response:
+            completed_response = getattr(event, "response", None)
+            if completed_response is not None:
+                resolved_model = getattr(completed_response, "model", resolved_model)
             if getattr(event, "type", None) != "response.output_text.delta":
                 continue
             delta = getattr(event, "delta", "")
@@ -120,7 +124,7 @@ class OpenAICompatibleAgentDriver:
                 parts.append(text)
                 if on_delta is not None:
                     on_delta(text)
-        return "".join(parts)
+        return "".join(parts), resolved_model
 
     def _get_client(self) -> ResponsesClient:
         if self._client is not None:
