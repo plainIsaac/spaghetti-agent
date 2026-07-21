@@ -54,6 +54,22 @@ class MultiAgentSession:
             self._workers[self.coordinator].request_turn()
         return message
 
+    @property
+    def agent(self) -> str:
+        return self.coordinator
+
+    def observe(self):
+        return self.supervisor.observable_state.list(self.coordinator)
+
+    def user_messages(self):
+        return self.supervisor.journal.pending("user")
+
+    def user_message_label(self, message: Message) -> str:
+        return message.sender
+
+    def conversation_log(self):
+        return self.supervisor.journal.conversation("user", self.coordinator)
+
     def worker(self, agent: str) -> ModelTurnWorker:
         return self._workers[agent]
 

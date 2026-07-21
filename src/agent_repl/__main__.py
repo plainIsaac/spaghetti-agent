@@ -13,6 +13,7 @@ from .openai_driver import (
     OpenRouterAgentDriver,
 )
 from .session import ModelTurnWorker, SingleAgentSession, _NOT_READY
+from .multi_agent import MultiAgentSession
 
 
 def _format_state(session: SingleAgentSession) -> str:
@@ -94,6 +95,7 @@ def main() -> None:
     turn_mode.add_argument("--demo", action="store_true", help="Run a deterministic demo agent turn after each normal message")
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
+    parser.add_argument("--multi-agent", action="store_true", help="Run coordinator, researcher, and builder over one shared supervisor")
     parser.add_argument("--model", help="Provider model override")
     parser.add_argument(
         "--default-context-window",
@@ -104,9 +106,8 @@ def main() -> None:
     parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider first-token and stream-idle timeout in seconds")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
-    session = SingleAgentSession.open(
-        str(arguments.data_dir / "inbox.sqlite"),
-        str(arguments.data_dir / "observable-state.sqlite"),
+    session = MultiAgentSession.open(str(arguments.data_dir)) if arguments.multi_agent else SingleAgentSession.open(
+        str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
     )
     model_driver = None
     if arguments.openai:
@@ -124,9 +125,17 @@ def main() -> None:
         print(f"model> evaluation {result.status if result else 'skipped'}")
         print("you> ", end="", flush=True)
 
-    worker = ModelTurnWorker(
-        session, model_driver, render_completion, default_context_window=arguments.default_context_window,
-    ) if model_driver is not None else None
+    if arguments.multi_agent and model_driver is None:
+        parser.error("--multi-agent requires --openai or --openrouter")
+    if arguments.multi_agent and model_driver is not None:
+        driver_type = type(model_driver)
+        drivers = {agent: driver_type(model_driver.model, request_timeout=arguments.request_timeout) for agent in session.agents}
+        for agent, driver in drivers.items():
+            driver.set_http_log_path(str(arguments.data_dir / f"provider-http-{agent}.jsonl"))
+        session.start_workers(drivers, arguments.default_context_window)
+        worker = session.worker(session.coordinator)
+    else:
+        worker = ModelTurnWorker(session, model_driver, render_completion, default_context_window=arguments.default_context_window) if model_driver is not None else None
     agents_were_active = False
     try:
         while True:

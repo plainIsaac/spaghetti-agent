@@ -160,6 +160,16 @@ default. Start the CLI with `--no-default-context-window` to use only the
 triggering message and make broader context entirely explicit through the
 agent's Python APIs.
 
+Run the first coordinator/specialist console experiment with:
+
+```powershell
+agent-repl --openrouter --multi-agent
+```
+
+Normal input reaches the coordinator only. It may delegate durable tasks to the
+researcher and builder; each receives separate provider HTTP logs in the data
+directory.
+
 The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.
 The next spike must define which values receive a durable representation and how
