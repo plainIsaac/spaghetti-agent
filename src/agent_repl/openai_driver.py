@@ -9,6 +9,7 @@ import os
 import re
 from pathlib import Path
 from datetime import datetime, timezone
+from threading import Event, Timer
 from typing import Any, Callable, Protocol
 
 from .kernel import KernelResult
@@ -125,8 +126,20 @@ class OpenAICompatibleAgentDriver:
         }
         opened = datetime.now(timezone.utc)
         self._append_http_log({"timestamp": opened.isoformat(), "event": "stream_opened", "provider": self.provider_name, "model": self.model})
+        timed_out = Event()
+        client = self._get_client()
+
+        def close_overdue_client() -> None:
+            timed_out.set()
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+
+        deadline = Timer(self.request_timeout, close_overdue_client)
+        deadline.daemon = True
+        deadline.start()
         try:
-            response = self._get_client().responses.create(
+            response = client.responses.create(
                 model=self.model,
                 instructions=_INSTRUCTIONS,
                 input=json.dumps(request),
@@ -137,6 +150,10 @@ class OpenAICompatibleAgentDriver:
             closed = datetime.now(timezone.utc)
             self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds(), "error": f"{type(error).__name__}: {error}"})
             raise
+        finally:
+            deadline.cancel()
+        if timed_out.is_set():
+            raise TimeoutError(f"provider stream exceeded {self.request_timeout:.1f}s total timeout")
         closed = datetime.now(timezone.utc)
         self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds()})
         source = self._strip_code_fence(raw_output)
