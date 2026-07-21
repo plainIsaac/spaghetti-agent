@@ -150,6 +150,19 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.value, (["agent", "peer"], "Competing edits"))
         self.assertEqual(session.supervisor.journal.pending("peer")[0].text, "Which invariant are you preserving?")
 
+    def test_coordinator_can_delegate_durable_task_to_specialist(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.supervisor.create_repl("builder")
+        builder = session.supervisor.start_agent_kernel("builder")
+
+        result = session.evaluate("_result = tasks.delegate('builder', 'Build editor shell', {'files': ['index.html']})")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value["owner"], "builder")
+        self.assertIn("Task 1 assigned", session.supervisor.journal.pending("builder")[0].text)
+        self.assertEqual(builder.evaluate("task = tasks.list()[0]\ntasks.take(task)\n_result = tasks.complete(task)").value["state"], "completed")
+
     def test_task_errors_create_challenges_and_promote_recurring_trouble(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

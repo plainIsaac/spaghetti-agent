@@ -67,6 +67,9 @@ Take a task before performing fallible work: kernel exceptions are then
 automatically recorded against that task by the supervisor.
 Record failures with `tasks.report_error(id, error)`; when work is materially
 hard, announce a follow-up with `tasks.challenge(id, description)`.
+Coordinators delegate specialist work with `tasks.delegate(agent, title, details)`.
+Specialists should publish concise results and message the coordinator, not the
+user, unless specifically granted responsibility for user communication.
 For a build or change request, first inspect the relevant inbox, recent user
 context, active tasks, and existing workspace before writing files. Record the
 work in a task, verify changed files after writing them, publish concise

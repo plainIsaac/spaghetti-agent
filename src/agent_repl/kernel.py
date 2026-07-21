@@ -248,6 +248,9 @@ class Tasks:
     def list(self) -> list[dict[str, Any]]:
         return self._call_supervisor("tasks.list", {})
 
+    def delegate(self, agent: str, title: str, details: Any = None) -> dict[str, Any]:
+        return self._call_supervisor("tasks.delegate", {"agent": agent, "title": title, "details": details})
+
 
 class Workspace:
     """Managed files for task-scoped, conflict-aware coordinated work."""

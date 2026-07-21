@@ -247,6 +247,16 @@ class Supervisor:
             task = self.tasks.announce(agent, str(payload["title"]), payload.get("details"))
             self.tasks.bind_messages(task.id, self._turn_messages.get(agent, []))
             return {"id": task.id, "state": task.state, "title": task.title}
+        if kind == "tasks.delegate":
+            recipient = str(payload["agent"])
+            if recipient not in self._repls:
+                raise KeyError(f"Unknown agent: {recipient}")
+            task = self.tasks.announce(recipient, str(payload["title"]), payload.get("details"))
+            message = self.journal.append(recipient=recipient, sender="supervisor", text=f"Task {task.id} assigned: {task.title}")
+            kernel = self._kernels.get(recipient)
+            if kernel is not None:
+                kernel.deliver(message)
+            return {"id": task.id, "owner": recipient, "state": task.state, "title": task.title}
         if kind == "tasks.take":
             task = self.tasks.transition(agent, _task_id(payload["task_id"]), "working")
             self._active_tasks[agent] = task.id

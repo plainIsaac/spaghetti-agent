@@ -252,6 +252,14 @@ and call `workspace.merge(task_id)`. Merge compares every changed file with the
 base revision recorded by the branch and rejects divergence rather than
 overwriting a newer main-workspace change.
 
+### Delegation
+
+A coordinator can create specialist-owned durable work with
+`tasks.delegate(agent, title, details)`. The supervisor records that task under
+the specialist, appends a durable assignment wake-up to its inbox, and delivers
+it to a running specialist kernel. Coordinators retain normal user messaging;
+specialists return concise results through observable state or agent messaging.
+
 ## Durability, cancellation, and imports
 
 - Durable state is explicit: an event journal and snapshots for supported
