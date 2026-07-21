@@ -260,6 +260,12 @@ the specialist, appends a durable assignment wake-up to its inbox, and delivers
 it to a running specialist kernel. Coordinators retain normal user messaging;
 specialists return concise results through observable state or agent messaging.
 
+`MultiAgentSession` assembles this topology with a `coordinator`, `researcher`,
+and `builder` by default. Each role has its own kernel and optional model worker
+over the shared supervisor. User messages enter only the coordinator inbox;
+assignment and completion wake-ups activate the appropriate specialist or the
+coordinator without user polling.
+
 ## Durability, cancellation, and imports
 
 - Durable state is explicit: an event journal and snapshots for supported

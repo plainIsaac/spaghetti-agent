@@ -252,6 +252,7 @@ class Supervisor:
             if recipient not in self._repls:
                 raise KeyError(f"Unknown agent: {recipient}")
             task = self.tasks.announce(recipient, str(payload["title"]), payload.get("details"))
+            self.tasks.set_delegator(task.id, agent)
             message = self.journal.append(recipient=recipient, sender="supervisor", text=f"Task {task.id} assigned: {task.title}")
             kernel = self._kernels.get(recipient)
             if kernel is not None:
@@ -270,6 +271,12 @@ class Supervisor:
             for message_id in self.tasks.messages(task.id):
                 if self.journal.acknowledge(agent, message_id):
                     self.working_context.clear(agent, "message", str(message_id))
+            delegator = self.tasks.delegator(task.id)
+            if delegator is not None:
+                message = self.journal.append(recipient=delegator, sender="supervisor", text=f"Task {task.id} completed by {agent}: {task.title}")
+                kernel = self._kernels.get(delegator)
+                if kernel is not None:
+                    kernel.deliver(message)
             return {"id": task.id, "state": task.state}
         if kind == "workspace.list":
             return self.workspace.list(str(payload.get("path", ".")))

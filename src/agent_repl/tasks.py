@@ -59,6 +59,10 @@ class TaskRegistry:
                 task_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
                 PRIMARY KEY(task_id, message_id))"""
         )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS task_delegations (
+                task_id INTEGER PRIMARY KEY, delegator TEXT NOT NULL)"""
+        )
         self._add_missing_columns()
         self._connection.commit()
 
@@ -143,6 +147,16 @@ class TaskRegistry:
     def messages(self, task_id: int) -> list[int]:
         with self._lock:
             return [int(row[0]) for row in self._connection.execute("SELECT message_id FROM task_messages WHERE task_id=? ORDER BY message_id", (task_id,))]
+
+    def set_delegator(self, task_id: int, delegator: str) -> None:
+        with self._lock:
+            self._connection.execute("INSERT OR REPLACE INTO task_delegations(task_id,delegator) VALUES(?,?)", (task_id, delegator))
+            self._connection.commit()
+
+    def delegator(self, task_id: int) -> str | None:
+        with self._lock:
+            row = self._connection.execute("SELECT delegator FROM task_delegations WHERE task_id=?", (task_id,)).fetchone()
+            return None if row is None else str(row[0])
 
     def errors(self, task_id: int) -> list[dict[str, Any]]:
         return [

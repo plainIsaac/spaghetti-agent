@@ -12,6 +12,7 @@ from .openai_driver import (
     OpenRouterAgentDriver,
 )
 from .session import SingleAgentSession
+from .multi_agent import MultiAgentSession
 from .supervisor import RestartReport, Supervisor
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "PersistentKernel",
     "RestartReport",
     "SingleAgentSession",
+    "MultiAgentSession",
     "Supervisor",
 ]

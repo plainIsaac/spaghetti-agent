@@ -162,6 +162,7 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.value["owner"], "builder")
         self.assertIn("Task 1 assigned", session.supervisor.journal.pending("builder")[0].text)
         self.assertEqual(builder.evaluate("task = tasks.list()[0]\ntasks.take(task)\n_result = tasks.complete(task)").value["state"], "completed")
+        self.assertIn("Task 1 completed by builder", session.supervisor.journal.pending("agent")[0].text)
 
     def test_task_errors_create_challenges_and_promote_recurring_trouble(self) -> None:
         session = SingleAgentSession.open()
