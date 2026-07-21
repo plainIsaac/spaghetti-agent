@@ -95,7 +95,9 @@ def main() -> None:
     turn_mode.add_argument("--demo", action="store_true", help="Run a deterministic demo agent turn after each normal message")
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
-    parser.add_argument("--multi-agent", action="store_true", help="Run coordinator, researcher, and builder over one shared supervisor")
+    agent_mode = parser.add_mutually_exclusive_group()
+    agent_mode.add_argument("--multi-agent", dest="multi_agent", action="store_true", default=True, help="Run the coordinator runtime (default)")
+    agent_mode.add_argument("--single-agent", dest="multi_agent", action="store_false", help="Use the legacy one-agent runtime")
     parser.add_argument("--no-subagents", action="store_true", help="Disable dynamic subagent creation")
     parser.add_argument("--model", help="Provider model override")
     parser.add_argument(
@@ -107,7 +109,8 @@ def main() -> None:
     parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider first-token and stream-idle timeout in seconds")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
-    session = MultiAgentSession.open(str(arguments.data_dir)) if arguments.multi_agent else SingleAgentSession.open(
+    multi_agent = arguments.multi_agent and not arguments.demo
+    session = MultiAgentSession.open(str(arguments.data_dir), specialists=[]) if multi_agent else SingleAgentSession.open(
         str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
     )
     model_driver = None
@@ -126,9 +129,9 @@ def main() -> None:
         print(f"model> evaluation {result.status if result else 'skipped'}")
         print("you> ", end="", flush=True)
 
-    if arguments.multi_agent and model_driver is None:
-        parser.error("--multi-agent requires --openai or --openrouter")
-    if arguments.multi_agent and model_driver is not None:
+    if multi_agent and model_driver is None:
+        parser.error("The default coordinator runtime requires --openai or --openrouter; use --demo or --single-agent for local experiments")
+    if multi_agent and model_driver is not None:
         driver_type = type(model_driver)
         drivers = {agent: driver_type(model_driver.model, request_timeout=arguments.request_timeout) for agent in session.agents}
         for agent, driver in drivers.items():

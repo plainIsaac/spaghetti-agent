@@ -160,14 +160,16 @@ default. Start the CLI with `--no-default-context-window` to use only the
 triggering message and make broader context entirely explicit through the
 agent's Python APIs.
 
-Run the first coordinator/specialist console experiment with:
+Model-backed runs use a coordinator by default. The coordinator decides whether
+to create specialists dynamically; start the legacy runtime only with
+`--single-agent`. For example:
 
 ```powershell
-agent-repl --openrouter --multi-agent
+agent-repl --openrouter
 ```
 
-Normal input reaches the coordinator only. It may delegate durable tasks to the
-researcher and builder; each receives separate provider HTTP logs in the data
+Normal input reaches the coordinator only. It may create and delegate durable
+work to specialists; each receives a separate provider HTTP log in the data
 directory.
 
 The process experiment deliberately has no durable Python heap. That is not a
