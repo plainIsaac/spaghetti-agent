@@ -96,6 +96,7 @@ def main() -> None:
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
     parser.add_argument("--multi-agent", action="store_true", help="Run coordinator, researcher, and builder over one shared supervisor")
+    parser.add_argument("--no-subagents", action="store_true", help="Disable dynamic subagent creation")
     parser.add_argument("--model", help="Provider model override")
     parser.add_argument(
         "--default-context-window",
@@ -133,6 +134,7 @@ def main() -> None:
         for agent, driver in drivers.items():
             driver.set_http_log_path(str(arguments.data_dir / f"provider-http-{agent}.jsonl"))
         session.start_workers(drivers, arguments.default_context_window)
+        session.supervisor.allow_subagents = not arguments.no_subagents
         worker = session.worker(session.coordinator)
     else:
         worker = ModelTurnWorker(session, model_driver, render_completion, default_context_window=arguments.default_context_window) if model_driver is not None else None

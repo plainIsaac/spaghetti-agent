@@ -87,6 +87,8 @@ class Supervisor:
         self._handlers: dict[str, Callable[[Message], None]] = {}
         self._kernels: dict[str, PersistentKernel] = {}
         self._active_tasks: dict[str, int] = {}
+        self._agent_spawner: Callable[[str, str], None] | None = None
+        self.allow_subagents = True
         self._turn_messages: dict[str, list[int]] = {}
         self._scheduler_running = threading.Event()
         self._scheduler_running.set()
@@ -142,6 +144,9 @@ class Supervisor:
 
     def clear_turn_messages(self, agent: str) -> None:
         self._turn_messages.pop(agent, None)
+
+    def set_agent_spawner(self, spawner: Callable[[str, str], None] | None, allow_subagents: bool = True) -> None:
+        self._agent_spawner, self.allow_subagents = spawner, allow_subagents
 
     def start_user_kernel(self, user: str = "user", agent: str = "agent") -> PersistentKernel:
         """Start the user's persistent Python REPL with explicit read/write capabilities."""
@@ -370,6 +375,18 @@ class Supervisor:
             if kernel is not None:
                 kernel.deliver(message)
             return {"id": message.id, "recipient": recipient}
+        if kind == "agents.spawn":
+            if not self.allow_subagents or self._agent_spawner is None:
+                raise RuntimeError("subagent creation is disabled")
+            child = str(payload["name"])
+            if child in self._repls:
+                raise ValueError(f"Agent already exists: {child}")
+            self._agent_spawner(child, str(payload["role"]))
+            task = self.tasks.announce(child, str(payload["task"]), payload.get("details"))
+            self.tasks.set_delegator(task.id, agent)
+            message = self.journal.append(recipient=child, sender="supervisor", text=f"Task {task.id} assigned: {task.title}")
+            self._kernels[child].deliver(message)
+            return {"agent": child, "task_id": task.id, "role": payload["role"]}
         if kind == "conflicts.announce":
             return self.tasks.announce_conflict(agent, str(payload["resource"]), str(payload["summary"]), list(payload.get("related_tasks", [])))
         if kind == "inbox.handler_failed":

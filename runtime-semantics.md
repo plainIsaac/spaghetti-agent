@@ -266,6 +266,12 @@ over the shared supervisor. User messages enter only the coordinator inbox;
 assignment and completion wake-ups activate the appropriate specialist or the
 coordinator without user polling.
 
+When subagents are enabled, any agent can call
+`agents.spawn(name, role, task, details)`. The supervisor creates the child
+kernel and model worker, records a delegated task, and wakes the child through
+its inbox. `--no-subagents` disables this capability at runtime; further limits
+on child depth and concurrency are the next control layer.
+
 ## Durability, cancellation, and imports
 
 - Durable state is explicit: an event journal and snapshots for supported

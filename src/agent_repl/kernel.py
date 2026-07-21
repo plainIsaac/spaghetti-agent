@@ -374,6 +374,9 @@ class Agents:
     def message(self, recipient: str, text: str) -> dict[str, Any]:
         return self._call_supervisor("agents.message", {"recipient": recipient, "text": text})
 
+    def spawn(self, name: str, role: str, task: str, details: Any = None) -> dict[str, Any]:
+        return self._call_supervisor("agents.spawn", {"name": name, "role": role, "task": task, "details": details})
+
 
 class Conflicts:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:

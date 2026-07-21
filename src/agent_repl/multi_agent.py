@@ -34,6 +34,7 @@ class MultiAgentSession:
             self.supervisor.start_agent_kernel(agent)
         self.supervisor.start_user_kernel(agent=coordinator)
         self._workers: dict[str, ModelTurnWorker] = {}
+        self._drivers: dict[str, OpenAICompatibleAgentDriver] = {}
 
     @classmethod
     def open(cls, data_dir: str, coordinator: str = "coordinator", specialists: list[str] | None = None) -> "MultiAgentSession":
@@ -47,6 +48,16 @@ class MultiAgentSession:
             raise ValueError(f"Missing model drivers for: {', '.join(sorted(missing))}")
         for agent in self.agents:
             self._workers[agent] = ModelTurnWorker(_AgentTurnSession(self.supervisor, agent), drivers[agent], default_context_window=default_context_window)
+        self._drivers = drivers
+        self.supervisor.set_agent_spawner(self._spawn_agent)
+
+    def _spawn_agent(self, agent: str, role: str) -> None:
+        parent_driver = next(iter(self._drivers.values()))
+        driver = type(parent_driver)(parent_driver.model, request_timeout=parent_driver.request_timeout)
+        self.agents.append(agent)
+        self.supervisor.create_repl(agent); self.supervisor.start_agent_kernel(agent)
+        self._drivers[agent] = driver
+        self._workers[agent] = ModelTurnWorker(_AgentTurnSession(self.supervisor, agent), driver)
 
     def send(self, text: str) -> Message:
         message = self.supervisor.append_user_message(self.coordinator, text)
