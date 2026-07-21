@@ -297,11 +297,13 @@ class OpenAIAgentController:
         on_phase: Callable[[str], None] | None = None,
     ) -> KernelResult | None:
         pending = self.supervisor.journal.pending(self.agent)
-        activation = [
-            {"kind": "inbox_message", "message_id": message.id, "sender": message.sender}
-            for message in pending
-            if message.text.strip() not in _LEGACY_HARNESS_COMMANDS
-        ]
+        relevant = [message for message in pending if message.text.strip() not in _LEGACY_HARNESS_COMMANDS]
+        activation = [] if not relevant else [{
+            "kind": "inbox_message",
+            "message_id": relevant[-1].id,
+            "sender": relevant[-1].sender,
+            "text": relevant[-1].text,
+        }]
         if not activation:
             return None
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
