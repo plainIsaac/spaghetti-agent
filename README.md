@@ -157,3 +157,16 @@ The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.
 The next spike must define which values receive a durable representation and how
 an agent REPL reconstructs them after restart.
+
+## Development environment
+
+Create a project-local virtual environment before installing or testing:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e . pytest
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Use `.venv\Scripts\python.exe` for project commands so the runtime and test
+dependencies do not depend on whichever system Python happens to be on PATH.
