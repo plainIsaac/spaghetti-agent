@@ -34,10 +34,10 @@ executable Python source, even when a request is innocuous or needs no action.
 The activation identifies why you were invoked. Durable inbox entries, task
 history, errors, observations, and prior messages are pulled through Python:
 use `inbox.pending()` and `context`, not assumed prompt snapshots.
-Activation also carries a small recent conversation and pending-work window for
-continuity. Treat it as a convenience, not the whole state; do not ask the user
-to repeat information that is already in that window or obtainable through
-`context.messages.with_party("user")`.
+When the default context window feature is enabled, activation also carries a
+small recent conversation and pending-work window for continuity. Treat it as a
+convenience, not the whole state; do not ask the user to repeat information
+already in that window or obtainable through `context.messages.with_party("user")`.
 For an inbox activation, read the actual message from `inbox.pending()` before
 replying. Do not give a canned acknowledgement or claim you lack its contents.
 `inbox`, `tasks`, `context`, `observable`, `user`, `agents`, and `conflicts`
@@ -349,10 +349,18 @@ class OpenRouterAgentDriver(OpenAICompatibleAgentDriver):
 class OpenAIAgentController:
     """Connects durable runtime state to a single OpenAI-planned agent turn."""
 
-    def __init__(self, supervisor: Supervisor, driver: OpenAICompatibleAgentDriver, agent: str = "agent") -> None:
+    def __init__(
+        self,
+        supervisor: Supervisor,
+        driver: OpenAICompatibleAgentDriver,
+        agent: str = "agent",
+        *,
+        default_context_window: bool = True,
+    ) -> None:
         self.supervisor = supervisor
         self.driver = driver
         self.agent = agent
+        self.default_context_window = default_context_window
 
     def run_turn(
         self,
@@ -370,11 +378,12 @@ class OpenAIAgentController:
         }]
         if not activation:
             return None
-        activation[0]["context_window"] = self._context_window()
-        activation[0]["pending_work"] = self._pending_work(relevant)
-        active_tasks = self._active_task_summary()
-        if active_tasks:
-            activation[0]["active_tasks"] = active_tasks
+        if self.default_context_window:
+            activation[0]["context_window"] = self._context_window()
+            activation[0]["pending_work"] = self._pending_work(relevant)
+            active_tasks = self._active_task_summary()
+            if active_tasks:
+                activation[0]["active_tasks"] = active_tasks
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
         model_feedback = feedback_value.value if feedback_value is not None and feedback_value.value.get("active") else None
         scopes = [("session", "")]

@@ -100,9 +100,12 @@ class SingleAgentSession:
         driver: "OpenAICompatibleAgentDriver",
         on_delta=None,
         on_phase=None,
+        default_context_window: bool = True,
     ) -> KernelResult | None:
         from .openai_driver import OpenAIAgentController
-        result = OpenAIAgentController(self.supervisor, driver, self.agent).run_turn(
+        result = OpenAIAgentController(
+            self.supervisor, driver, self.agent, default_context_window=default_context_window,
+        ).run_turn(
             on_delta=on_delta,
             on_program=self._append_model_program,
             on_phase=on_phase,
@@ -164,10 +167,12 @@ class ModelTurnWorker:
         session: SingleAgentSession,
         driver: "OpenAICompatibleAgentDriver",
         on_complete: Callable[[KernelResult | None], None] | None = None,
+        default_context_window: bool = True,
     ) -> None:
         self.session = session
         self.driver = driver
         self._on_complete = on_complete
+        self._default_context_window = default_context_window
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-model")
         self._future: Future[KernelResult | None] | None = None
         self._phase = "idle"
@@ -203,7 +208,9 @@ class ModelTurnWorker:
             with self._lock:
                 self._phase = value
         try:
-            result = self.session.run_openai_turn(self.driver, on_phase=phase)
+            result = self.session.run_openai_turn(
+                self.driver, on_phase=phase, default_context_window=self._default_context_window,
+            )
         except Exception as error:
             result = KernelResult("error", error=f"{type(error).__name__}: {error}")
         if self._on_complete is not None:

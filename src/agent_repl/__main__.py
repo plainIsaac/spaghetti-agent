@@ -95,6 +95,12 @@ def main() -> None:
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
     parser.add_argument("--model", help="Provider model override")
+    parser.add_argument(
+        "--default-context-window",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include bounded recent conversation, pending work, and active tasks in model activation",
+    )
     parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider first-token and stream-idle timeout in seconds")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
@@ -118,7 +124,9 @@ def main() -> None:
         print(f"model> evaluation {result.status if result else 'skipped'}")
         print("you> ", end="", flush=True)
 
-    worker = ModelTurnWorker(session, model_driver, render_completion) if model_driver is not None else None
+    worker = ModelTurnWorker(
+        session, model_driver, render_completion, default_context_window=arguments.default_context_window,
+    ) if model_driver is not None else None
     agents_were_active = False
     try:
         while True:

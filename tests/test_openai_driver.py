@@ -161,6 +161,25 @@ class OpenAIDriverTests(unittest.TestCase):
         ])
         self.assertEqual(activation["pending_work"][0]["text"], "Add version history too.")
 
+    def test_default_context_window_can_be_disabled(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Earlier project requirement.")
+        session.evaluate("inbox.ack(inbox.pending()[0]['id'])")
+        session.send("Current request.")
+        client = FakeClient("inbox.ack(inbox.pending()[0]['id'])")
+
+        result = session.run_openai_turn(
+            OpenAIAgentDriver(model="test-model", client=client), default_context_window=False,
+        )
+
+        self.assertEqual(result.status, "ok")
+        activation = json.loads(client.responses.calls[0]["input"])["activation"][0]
+        self.assertEqual(activation["text"], "Current request.")
+        self.assertNotIn("context_window", activation)
+        self.assertNotIn("pending_work", activation)
+        self.assertNotIn("active_tasks", activation)
+
     def test_driver_includes_only_opted_in_local_context_for_active_message(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

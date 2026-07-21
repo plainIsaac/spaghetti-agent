@@ -155,6 +155,11 @@ with no automatic retry. The timer resets after each streamed text token, so a
 healthy long response is not cut off; adjust the limit deliberately with
 `--request-timeout` when a model warrants it.
 
+Model turns include a bounded recent-conversation and pending-work window by
+default. Start the CLI with `--no-default-context-window` to use only the
+triggering message and make broader context entirely explicit through the
+agent's Python APIs.
+
 The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.
 The next spike must define which values receive a durable representation and how

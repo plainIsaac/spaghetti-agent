@@ -85,6 +85,9 @@ message and character budgets, and the agent must use Python capabilities for
 older history, task details, errors, observations, and workspace inspection.
 In particular, an agent must not ask a user to repeat project requirements that
 are in the activation window or available through `context.messages`.
+This convenience is a feature flag, enabled by default. A runtime may disable
+it to provide only the immediate triggering message and require all broader
+context to be deliberately pulled through Python.
 
 Pending messages are durable work, not an implicit “latest only” queue. A model
 turn must inspect the inbox when more than one user message remains and either
