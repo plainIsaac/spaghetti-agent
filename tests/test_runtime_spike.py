@@ -8,9 +8,41 @@ import time
 import unittest
 
 from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, SingleAgentSession, Supervisor
+from agent_repl.workspace import Workspace
 
 
 class RuntimeSpikeTests(unittest.TestCase):
+    def test_managed_workspace_claims_writes_and_rejects_stale_revisions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            try:
+                workspace.claim("builder", 1, "app.txt")
+                written = workspace.write_text("builder", 1, "app.txt", "first", None)
+                read = workspace.read_text("app.txt")
+
+                self.assertEqual(read["text"], "first")
+                self.assertEqual(workspace.changes(1)[0]["revision"], written["revision"])
+                with self.assertRaisesRegex(RuntimeError, "expected"):
+                    workspace.write_text("builder", 1, "app.txt", "second", "stale")
+                with self.assertRaisesRegex(RuntimeError, "claimed"):
+                    workspace.claim("reviewer", 2, "app.txt")
+            finally:
+                workspace.close()
+
+    def test_completed_task_acknowledges_its_bound_source_message(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        message = session.send("Build the first project file.")
+        session.supervisor.set_turn_messages("agent", [message.id])
+        try:
+            result = session.evaluate("task = tasks.announce('Build file')\ntasks.take(task)\ntasks.complete(task)")
+        finally:
+            session.supervisor.clear_turn_messages("agent")
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(session.supervisor.tasks.messages(1), [message.id])
+        self.assertEqual(session.supervisor.journal.pending("agent"), [])
+
     def test_agent_can_announce_take_and_wait_for_observable_task_state(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

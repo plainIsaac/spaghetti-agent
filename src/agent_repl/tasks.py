@@ -54,6 +54,11 @@ class TaskRegistry:
                 id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, actor TEXT NOT NULL,
                 event TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT NOT NULL)"""
         )
+        self._connection.execute(
+            """CREATE TABLE IF NOT EXISTS task_messages (
+                task_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+                PRIMARY KEY(task_id, message_id))"""
+        )
         self._add_missing_columns()
         self._connection.commit()
 
@@ -124,6 +129,20 @@ class TaskRegistry:
             {"actor": row[0], "event": row[1], "details": json.loads(row[2]), "created_at": row[3]}
             for row in self._connection.execute("SELECT actor,event,details,created_at FROM task_events WHERE task_id=? ORDER BY id", (task_id,))
         ]
+
+    def bind_messages(self, task_id: int, message_ids: list[int]) -> None:
+        with self._lock:
+            if self._get(task_id) is None:
+                raise KeyError(task_id)
+            self._connection.executemany(
+                "INSERT OR IGNORE INTO task_messages(task_id,message_id) VALUES(?,?)",
+                [(task_id, message_id) for message_id in message_ids],
+            )
+            self._connection.commit()
+
+    def messages(self, task_id: int) -> list[int]:
+        with self._lock:
+            return [int(row[0]) for row in self._connection.execute("SELECT message_id FROM task_messages WHERE task_id=? ORDER BY message_id", (task_id,))]
 
     def errors(self, task_id: int) -> list[dict[str, Any]]:
         return [

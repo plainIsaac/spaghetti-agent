@@ -15,6 +15,7 @@ from .observable_state import ObservableStateRegistry, ObservableValue
 from .supervisor import RestartReport, Supervisor
 from .tasks import TaskRegistry
 from .working_context import WorkingContext
+from .workspace import Workspace
 
 if TYPE_CHECKING:
     from .openai_driver import OpenAICompatibleAgentDriver, PlannedTurn
@@ -59,7 +60,8 @@ class SingleAgentSession:
         model_log_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("model-programs.jsonl"))
         task_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("tasks.sqlite"))
         context_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("working-context.sqlite"))
-        return cls(Supervisor(journal, observable_state, TaskRegistry(task_path), WorkingContext(context_path)), agent, model_log_path)
+        workspace_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("workspace.sqlite"))
+        return cls(Supervisor(journal, observable_state, TaskRegistry(task_path), WorkingContext(context_path), Workspace(Path.cwd(), workspace_path)), agent, model_log_path)
 
     def send(self, text: str) -> Message:
         """Queue ordinary user text without executing it as agent source code."""
@@ -157,6 +159,7 @@ class SingleAgentSession:
         self.supervisor.observable_state.close()
         self.supervisor.tasks.close()
         self.supervisor.working_context.close()
+        self.supervisor.workspace.close()
 
 
 class ModelTurnWorker:

@@ -218,6 +218,32 @@ does not consume a REPL loop: when the matching state is published, the
 supervisor marks the task `ready` and appends a durable wake-up message for the
 agent. Scheduling a new model evaluation from that message is the next layer.
 
+Each model-created task is bound to its triggering inbox message. Completing the
+task resolves those bound messages, while failed or interrupted tasks leave
+their source work durable and attributable. This prevents a completed request
+from resurfacing as an uncontextualized later turn.
+
+### Managed workspace
+
+`workspace` is the collaboration path for shared project files. Agents use an
+active task to claim a relative path, read its content and revision, and make an
+atomic write guarded by the expected revision:
+
+```python
+task = tasks.announce("Build editor shell")
+tasks.take(task)
+workspace.claim(task, "writing_tool/index.html")
+before = workspace.read_text("writing_tool/index.html")
+workspace.write_text(task, "writing_tool/index.html", new_html, before["revision"])
+tasks.complete(task)
+```
+
+Claims and writes are durable supervisor records. A second managed agent cannot
+claim the same path, and a stale revision produces a conflict instead of an
+overwrite. The current user-parity runtime still permits raw Python filesystem
+I/O; that path is explicitly unmanaged and must not be used for coordinated
+multi-agent files. Container isolation remains the future enforcement boundary.
+
 ## Durability, cancellation, and imports
 
 - Durable state is explicit: an event journal and snapshots for supported

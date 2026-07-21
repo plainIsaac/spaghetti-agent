@@ -15,6 +15,7 @@ from .kernel import ExecutionState, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
 from .tasks import TaskRegistry
 from .working_context import WorkingContext
+from .workspace import Workspace
 
 
 _STOP = object()
@@ -72,7 +73,7 @@ class ReplQueue:
 class Supervisor:
     """Coordinates explicit inbox sharing and schedules opt-in delivery."""
 
-    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None, working_context: WorkingContext | None = None) -> None:
+    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None, working_context: WorkingContext | None = None, workspace: Workspace | None = None) -> None:
         self.journal = journal
         self._owns_observable_state = observable_state is None
         self.observable_state = observable_state or ObservableStateRegistry()
@@ -80,10 +81,13 @@ class Supervisor:
         self._owns_tasks = tasks is None
         self._owns_working_context = working_context is None
         self.working_context = working_context or WorkingContext()
+        self._owns_workspace = workspace is None
+        self.workspace = workspace or Workspace(".")
         self._repls: dict[str, ReplQueue] = {}
         self._handlers: dict[str, Callable[[Message], None]] = {}
         self._kernels: dict[str, PersistentKernel] = {}
         self._active_tasks: dict[str, int] = {}
+        self._turn_messages: dict[str, list[int]] = {}
         self._scheduler_running = threading.Event()
         self._scheduler_running.set()
         self._scheduler_thread = threading.Thread(target=self._schedule_due_tasks, name="task-scheduler", daemon=True)
@@ -132,6 +136,12 @@ class Supervisor:
             return self._kernels[agent]
         except KeyError as error:
             raise KeyError(f"No running agent kernel: {agent}") from error
+
+    def set_turn_messages(self, agent: str, message_ids: list[int]) -> None:
+        self._turn_messages[agent] = message_ids
+
+    def clear_turn_messages(self, agent: str) -> None:
+        self._turn_messages.pop(agent, None)
 
     def start_user_kernel(self, user: str = "user", agent: str = "agent") -> PersistentKernel:
         """Start the user's persistent Python REPL with explicit read/write capabilities."""
@@ -235,6 +245,7 @@ class Supervisor:
             return acknowledged
         if kind == "tasks.announce":
             task = self.tasks.announce(agent, str(payload["title"]), payload.get("details"))
+            self.tasks.bind_messages(task.id, self._turn_messages.get(agent, []))
             return {"id": task.id, "state": task.state, "title": task.title}
         if kind == "tasks.take":
             task = self.tasks.transition(agent, _task_id(payload["task_id"]), "working")
@@ -245,7 +256,32 @@ class Supervisor:
             if self._active_tasks.get(agent) == task.id:
                 self._active_tasks.pop(agent, None)
             self.working_context.clear(agent, "task", str(task.id))
+            for message_id in self.tasks.messages(task.id):
+                if self.journal.acknowledge(agent, message_id):
+                    self.working_context.clear(agent, "message", str(message_id))
             return {"id": task.id, "state": task.state}
+        if kind == "workspace.list":
+            return self.workspace.list(str(payload.get("path", ".")))
+        if kind == "workspace.read_text":
+            return self.workspace.read_text(str(payload["path"]))
+        if kind == "workspace.claim":
+            task_id = _task_id(payload["task_id"])
+            task = self.tasks.get(task_id)
+            if task is None or task.owner != agent or task.state != "working":
+                raise RuntimeError("workspace claims require an active task owned by this agent")
+            return self.workspace.claim(agent, task_id, str(payload["path"]))
+        if kind == "workspace.write_text":
+            task_id = _task_id(payload["task_id"])
+            task = self.tasks.get(task_id)
+            if task is None or task.owner != agent or task.state != "working":
+                raise RuntimeError("workspace writes require an active task owned by this agent")
+            return self.workspace.write_text(agent, task_id, str(payload["path"]), str(payload["text"]), payload.get("expected_revision"))
+        if kind == "workspace.changes":
+            task_id = _task_id(payload["task_id"])
+            task = self.tasks.get(task_id)
+            if task is None or task.owner != agent:
+                raise KeyError(task_id)
+            return self.workspace.changes(task_id)
         if kind == "working_context.set":
             return self.working_context.set(agent, str(payload["key"]), payload["value"], str(payload.get("lifetime", "session")), str(payload.get("scope_id", "")), bool(payload.get("model_visible", False)))
         if kind == "working_context.get":
@@ -395,3 +431,5 @@ class Supervisor:
             self.tasks.close()
         if self._owns_working_context:
             self.working_context.close()
+        if self._owns_workspace:
+            self.workspace.close()

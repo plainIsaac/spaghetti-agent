@@ -249,6 +249,28 @@ class Tasks:
         return self._call_supervisor("tasks.list", {})
 
 
+class Workspace:
+    """Managed files for task-scoped, conflict-aware coordinated work."""
+
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def list(self, path: str = ".") -> list[str]:
+        return self._call_supervisor("workspace.list", {"path": path})
+
+    def read_text(self, path: str) -> dict[str, str]:
+        return self._call_supervisor("workspace.read_text", {"path": path})
+
+    def claim(self, task_id: Any, path: str) -> dict[str, Any]:
+        return self._call_supervisor("workspace.claim", {"task_id": task_id, "path": path})
+
+    def write_text(self, task_id: Any, path: str, text: str, expected_revision: str | None = None) -> dict[str, str]:
+        return self._call_supervisor("workspace.write_text", {"task_id": task_id, "path": path, "text": text, "expected_revision": expected_revision})
+
+    def changes(self, task_id: Any) -> list[dict[str, Any]]:
+        return self._call_supervisor("workspace.changes", {"task_id": task_id})
+
+
 class ContextTasks:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
         self._call_supervisor = call_supervisor
@@ -423,6 +445,7 @@ def _kernel_main(
         namespace["observable"] = Observable(call_supervisor)
         namespace["user"] = User(call_supervisor)
         namespace["tasks"] = Tasks(call_supervisor)
+        namespace["workspace"] = Workspace(call_supervisor)
         namespace["context"] = Context(call_supervisor)
         namespace["agents"] = Agents(call_supervisor)
         namespace["conflicts"] = Conflicts(call_supervisor)

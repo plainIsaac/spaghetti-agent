@@ -40,7 +40,7 @@ convenience, not the whole state; do not ask the user to repeat information
 already in that window or obtainable through `context.messages.with_party("user")`.
 For an inbox activation, read the actual message from `inbox.pending()` before
 replying. Do not give a canned acknowledgement or claim you lack its contents.
-`inbox`, `tasks`, `context`, `observable`, `user`, `agents`, and `conflicts`
+`inbox`, `tasks`, `workspace`, `context`, `observable`, `user`, `agents`, and `conflicts`
 are already injected REPL globals. Never import them as Python modules.
 `context.local` stores small JSON values scoped to a session, message, task,
 error, or current line. Only entries explicitly set with model_visible=True are
@@ -72,6 +72,11 @@ context, active tasks, and existing workspace before writing files. Record the
 work in a task, verify changed files after writing them, publish concise
 observable completion state, and send a concise completion reply. `print()` is
 debug output only and never a user-facing completion signal.
+For coordinated project files, use `workspace.list()`, `workspace.read_text()`,
+`workspace.claim(task, path)`, and `workspace.write_text(task, path, text,
+expected_revision)`. These managed writes are task-scoped and conflict-aware;
+ordinary Python filesystem I/O is unmanaged and must not be used for shared
+multi-agent files.
 
 A valid minimal program looks like:
 message = inbox.pending()[-1]
@@ -427,7 +432,11 @@ class OpenAIAgentController:
             return KernelResult("error", error=f"{type(error).__name__}: {error}")
         if on_phase is not None:
             on_phase("executing")
-        result = self.supervisor.agent_kernel(self.agent).evaluate(planned.source)
+        self.supervisor.set_turn_messages(self.agent, [relevant[-1].id])
+        try:
+            result = self.supervisor.agent_kernel(self.agent).evaluate(planned.source)
+        finally:
+            self.supervisor.clear_turn_messages(self.agent)
         if result.status == "ok":
             self.supervisor.publish_state(
                 self.agent,
@@ -471,7 +480,7 @@ class OpenAIAgentController:
     @staticmethod
     def _validate_program(source: str) -> None:
         tree = ast.parse(source, "<agent-repl-model-output>", "exec")
-        runtime_globals = {"inbox", "tasks", "context", "observable", "user", "agents", "conflicts"}
+        runtime_globals = {"inbox", "tasks", "workspace", "context", "observable", "user", "agents", "conflicts"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import) and any(alias.name.split(".")[0] in runtime_globals for alias in node.names):
                 raise ValueError("runtime APIs are injected globals; do not import them")
