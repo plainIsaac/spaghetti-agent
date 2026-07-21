@@ -77,6 +77,13 @@ model produces Python source that is evaluated in the persistent agent REPL,
 where it pulls broader state through granted capabilities and chooses what to
 persist or communicate.
 
+Pending messages are durable work, not an implicit “latest only” queue. A model
+turn must inspect the inbox when more than one user message remains and either
+create durable work for each distinct request or explicitly acknowledge an older
+duplicate once the current work fully satisfies it. This avoids replaying a
+completed request after a cancellation or restart without treating all pending
+messages as safe to discard.
+
 Model providers are adapters behind the same driver interface. Deterministic
 scripted drivers remain the baseline for runtime tests; low-cost or free hosted
 models are reserved for smoke tests, and stronger models are selected only when

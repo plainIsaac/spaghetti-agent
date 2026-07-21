@@ -49,6 +49,10 @@ class SingleAgentSession:
 
     @classmethod
     def open(cls, inbox_path: str = ":memory:", observable_state_path: str = ":memory:", agent: str = "agent") -> "SingleAgentSession":
+        if inbox_path != ":memory:":
+            Path(inbox_path).parent.mkdir(parents=True, exist_ok=True)
+        if observable_state_path != ":memory:":
+            Path(observable_state_path).parent.mkdir(parents=True, exist_ok=True)
         debug_log_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("conversation.jsonl"))
         journal = InboxJournal(inbox_path, debug_log_path)
         observable_state = ObservableStateRegistry(observable_state_path)

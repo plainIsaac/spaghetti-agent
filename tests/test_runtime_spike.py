@@ -57,6 +57,15 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.value, "temporary")
         self.assertIsNone(session.supervisor.working_context.get("agent", "scratch", "line", "current"))
 
+    def test_file_backed_session_creates_its_data_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            data_path = Path(directory) / "new" / "nested" / "inbox.sqlite"
+            session = SingleAgentSession.open(str(data_path), str(data_path.with_name("observable.sqlite")))
+            try:
+                self.assertTrue(data_path.exists())
+            finally:
+                session.close()
+
     def test_agent_can_announce_conflict_and_message_a_peer(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

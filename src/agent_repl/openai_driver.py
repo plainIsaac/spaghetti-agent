@@ -45,6 +45,10 @@ it queues the user reply and acknowledges that message in one runtime operation.
 Use explicit inbox.ack(message_id) only when you intentionally do not reply.
 Never bulk-ack user messages merely to clear the inbox. Leave unrelated
 messages pending, or create/take a task that records why they are handled.
+When more than one user message is pending, inspect the queue before acting.
+Create durable tasks for distinct work; if an older message is a duplicate that
+the current completed work fully satisfies, explicitly acknowledge that one
+message rather than leaving it to trigger duplicate work later.
 Use observable.publish(...) for state worth showing by default, and
 user.inbox.add(...) only for concise messages that need the user's attention.
 You can use ordinary persistent Python variables and the granted runtime
