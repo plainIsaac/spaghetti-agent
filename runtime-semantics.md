@@ -77,6 +77,15 @@ model produces Python source that is evaluated in the persistent agent REPL,
 where it pulls broader state through granted capabilities and chooses what to
 persist or communicate.
 
+Each activation includes a bounded default contextual window: the triggering
+message, recent user/agent messages, a small pending-work summary, active task
+summaries, and any explicitly model-visible working context. This is continuity
+information rather than a replacement for pull-based context: it has fixed
+message and character budgets, and the agent must use Python capabilities for
+older history, task details, errors, observations, and workspace inspection.
+In particular, an agent must not ask a user to repeat project requirements that
+are in the activation window or available through `context.messages`.
+
 Pending messages are durable work, not an implicit “latest only” queue. A model
 turn must inspect the inbox when more than one user message remains and either
 create durable work for each distinct request or explicitly acknowledge an older

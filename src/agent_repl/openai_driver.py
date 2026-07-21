@@ -20,6 +20,9 @@ from .supervisor import Supervisor
 DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
 DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+DEFAULT_CONTEXT_WINDOW_MESSAGES = 8
+DEFAULT_CONTEXT_WINDOW_CHARS = 4_000
+DEFAULT_PENDING_WORK_ITEMS = 6
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
 Return only Python source code to evaluate in that REPL; do not use Markdown
@@ -31,6 +34,10 @@ executable Python source, even when a request is innocuous or needs no action.
 The activation identifies why you were invoked. Durable inbox entries, task
 history, errors, observations, and prior messages are pulled through Python:
 use `inbox.pending()` and `context`, not assumed prompt snapshots.
+Activation also carries a small recent conversation and pending-work window for
+continuity. Treat it as a convenience, not the whole state; do not ask the user
+to repeat information that is already in that window or obtainable through
+`context.messages.with_party("user")`.
 For an inbox activation, read the actual message from `inbox.pending()` before
 replying. Do not give a canned acknowledgement or claim you lack its contents.
 `inbox`, `tasks`, `context`, `observable`, `user`, `agents`, and `conflicts`
@@ -60,6 +67,11 @@ Take a task before performing fallible work: kernel exceptions are then
 automatically recorded against that task by the supervisor.
 Record failures with `tasks.report_error(id, error)`; when work is materially
 hard, announce a follow-up with `tasks.challenge(id, description)`.
+For a build or change request, first inspect the relevant inbox, recent user
+context, active tasks, and existing workspace before writing files. Record the
+work in a task, verify changed files after writing them, publish concise
+observable completion state, and send a concise completion reply. `print()` is
+debug output only and never a user-facing completion signal.
 
 A valid minimal program looks like:
 message = inbox.pending()[-1]
@@ -358,6 +370,11 @@ class OpenAIAgentController:
         }]
         if not activation:
             return None
+        activation[0]["context_window"] = self._context_window()
+        activation[0]["pending_work"] = self._pending_work(relevant)
+        active_tasks = self._active_task_summary()
+        if active_tasks:
+            activation[0]["active_tasks"] = active_tasks
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
         model_feedback = feedback_value.value if feedback_value is not None and feedback_value.value.get("active") else None
         scopes = [("session", "")]
@@ -411,6 +428,36 @@ class OpenAIAgentController:
                 show_by_default=False,
             )
         return result
+
+    def _context_window(self) -> list[dict[str, Any]]:
+        """A bounded continuity aid; deeper history remains explicitly pullable."""
+        remaining = DEFAULT_CONTEXT_WINDOW_CHARS
+        selected: list[dict[str, Any]] = []
+        messages = [
+            message for message in self.supervisor.journal.conversation("user", self.agent)
+            if message.text.strip() not in _LEGACY_HARNESS_COMMANDS
+        ][-DEFAULT_CONTEXT_WINDOW_MESSAGES:]
+        for message in reversed(messages):
+            if remaining <= 0:
+                break
+            text = message.text[:remaining]
+            selected.append({"message_id": message.id, "sender": message.sender, "text": text})
+            remaining -= len(text)
+        return list(reversed(selected))
+
+    @staticmethod
+    def _pending_work(messages: list[Any]) -> list[dict[str, Any]]:
+        return [
+            {"message_id": message.id, "sender": message.sender, "text": message.text[:800]}
+            for message in messages[-DEFAULT_PENDING_WORK_ITEMS:]
+        ]
+
+    def _active_task_summary(self) -> list[dict[str, Any]]:
+        return [
+            {"id": task.id, "title": task.title, "state": task.state}
+            for task in self.supervisor.tasks.list(self.agent)
+            if task.state != "completed"
+        ][-DEFAULT_PENDING_WORK_ITEMS:]
 
     @staticmethod
     def _validate_program(source: str) -> None:

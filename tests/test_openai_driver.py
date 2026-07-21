@@ -142,6 +142,25 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("\"message_id\"", request["input"])
         self.assertIn("Please assess this design.", request["input"])
 
+    def test_activation_includes_a_bounded_recent_conversation_window(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Build a writing tool with a research pane.")
+        session.evaluate("inbox.reply_to_latest('I will start with the editor.')")
+        session.send("Add version history too.")
+        client = FakeClient("inbox.reply_to_latest('Working on it.')")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(model="test-model", client=client))
+
+        self.assertEqual(result.status, "ok")
+        activation = json.loads(client.responses.calls[0]["input"])["activation"][0]
+        self.assertEqual([entry["text"] for entry in activation["context_window"]], [
+            "Build a writing tool with a research pane.",
+            "I will start with the editor.",
+            "Add version history too.",
+        ])
+        self.assertEqual(activation["pending_work"][0]["text"], "Add version history too.")
+
     def test_driver_includes_only_opted_in_local_context_for_active_message(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)
