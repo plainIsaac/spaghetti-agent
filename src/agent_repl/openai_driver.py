@@ -30,6 +30,8 @@ executable Python source, even when a request is innocuous or needs no action.
 The activation identifies why you were invoked. Durable inbox entries, task
 history, errors, observations, and prior messages are pulled through Python:
 use `inbox.pending()` and `context`, not assumed prompt snapshots.
+For an inbox activation, read the actual message from `inbox.pending()` before
+replying. Do not give a canned acknowledgement or claim you lack its contents.
 `inbox`, `tasks`, `context`, `observable`, `user`, `agents`, and `conflicts`
 are already injected REPL globals. Never import them as Python modules.
 If `model_feedback` is present, your previous program was rejected. Correct the
@@ -52,9 +54,10 @@ Record failures with `tasks.report_error(id, error)`; when work is materially
 hard, announce a follow-up with `tasks.challenge(id, description)`.
 
 A valid minimal program looks like:
+message = inbox.pending()[-1]
 task = tasks.announce("Respond to latest inbox message")
 tasks.take(task)
-inbox.reply_to_latest("Handled your request.")
+inbox.reply_to_latest(f"Received: {message['text']}")
 tasks.complete(task)"""
 
 _LEGACY_HARNESS_COMMANDS = {":state", ":help", ":log", ":model-log", ":python", ":restart", ":quit"}

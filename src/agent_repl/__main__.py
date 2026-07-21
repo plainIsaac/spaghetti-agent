@@ -127,7 +127,6 @@ def main() -> None:
             if worker is not None:
                 result = worker.collect()
                 if result is not _NOT_READY:
-                    print(f"model> evaluation {result.status if result else 'skipped'}")
                     if result is not None and result.status == "ok" and session.supervisor.journal.pending("agent"):
                         worker.request_turn()
                 phase, elapsed = worker.status()
