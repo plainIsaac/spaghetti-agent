@@ -303,6 +303,22 @@ class ContextConflicts:
         return self._call_supervisor("context.conflicts.related", {"resource": resource})
 
 
+class LocalContext:
+    """Small scoped values an agent can deliberately make available next turn."""
+
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def set(self, key: str, value: Any, lifetime: str = "session", scope_id: str = "", *, model_visible: bool = False) -> dict[str, Any]:
+        return self._call_supervisor("working_context.set", {"key": key, "value": value, "lifetime": lifetime, "scope_id": scope_id, "model_visible": model_visible})
+
+    def get(self, key: str, lifetime: str = "session", scope_id: str = "") -> Any:
+        return self._call_supervisor("working_context.get", {"key": key, "lifetime": lifetime, "scope_id": scope_id})
+
+    def clear(self, lifetime: str = "session", scope_id: str = "", key: str | None = None) -> int:
+        return self._call_supervisor("working_context.clear", {"lifetime": lifetime, "scope_id": scope_id, "key": key})
+
+
 class Context:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
         self.tasks = ContextTasks(call_supervisor)
@@ -311,6 +327,7 @@ class Context:
         self.messages = ContextMessages(call_supervisor)
         self.agents = ContextAgents(call_supervisor)
         self.conflicts = ContextConflicts(call_supervisor)
+        self.local = LocalContext(call_supervisor)
 
 
 class Agents:

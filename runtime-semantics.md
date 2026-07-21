@@ -71,11 +71,11 @@ sessions. It is not the canonical agent context and is not shown by default.
 
 ### Model turn inputs
 
-The initial OpenAI driver receives the current durable agent inbox and explicitly
-published agent state for one turn. It does not receive a replayed chat
-transcript. The model produces Python source that is evaluated in the persistent
-agent REPL, where it can read more state through granted capabilities and choose
-what to persist or communicate.
+The initial OpenAI driver receives the triggering message and a deliberately
+small activation, not a replayed chat transcript or a broad state snapshot. The
+model produces Python source that is evaluated in the persistent agent REPL,
+where it pulls broader state through granted capabilities and chooses what to
+persist or communicate.
 
 Model providers are adapters behind the same driver interface. Deterministic
 scripted drivers remain the baseline for runtime tests; low-cost or free hosted
@@ -142,6 +142,29 @@ requests with ownership checked by the supervisor.
 High-level collaboration helpers and a granular runtime API are complementary.
 The latter must expose the machinery needed for agents to build their own
 caches, scheduling, memory, messaging, synchronization, and workflows.
+
+### Scoped working context
+
+`context.local` is a separate, supervisor-owned layer for small JSON values
+that guide near-term model work. It is not the durable queryable context graph
+and it is not UI state. The agent manages it explicitly:
+
+```python
+context.local.set("response_style", "brief", model_visible=True)
+context.local.set("parser_hint", hint, lifetime="task", scope_id=str(task["id"]))
+context.local.get("response_style")
+context.local.clear("session")
+```
+
+Entries have a `session`, `message`, `task`, `error`, or `line` lifetime. A
+non-session entry requires its corresponding scope id. Session values are
+cleared when an agent kernel starts or restarts; message values are cleared on
+acknowledgement; task values are cleared on completion; and line values are
+cleared when the current evaluation ends. Error lifetimes remain available until
+explicitly cleared, so recovery code can inspect them. Only values set with
+`model_visible=True` are included in a later relevant model activation, and
+only when their lifetime scope is active. This keeps model context mostly
+pull-based while allowing intentional, bounded push context.
 
 ## Execution units
 

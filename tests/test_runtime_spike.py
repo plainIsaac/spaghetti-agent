@@ -38,6 +38,25 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.value, ("Investigate parser", 1, "ready"))
 
+    def test_agent_can_manage_scoped_local_context(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        result = session.evaluate(
+            "context.local.set('approach', {'step': 1}, model_visible=True)\n"
+            "_result = context.local.get('approach')"
+        )
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value, {"step": 1})
+        self.assertEqual(session.supervisor.working_context.active("agent", [("session", "")])[0]["key"], "approach")
+
+        result = session.evaluate(
+            "context.local.set('scratch', 'temporary', lifetime='line', scope_id='current')\n"
+            "_result = context.local.get('scratch', lifetime='line', scope_id='current')"
+        )
+        self.assertEqual(result.value, "temporary")
+        self.assertIsNone(session.supervisor.working_context.get("agent", "scratch", "line", "current"))
+
     def test_agent_can_announce_conflict_and_message_a_peer(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

@@ -35,6 +35,9 @@ For an inbox activation, read the actual message from `inbox.pending()` before
 replying. Do not give a canned acknowledgement or claim you lack its contents.
 `inbox`, `tasks`, `context`, `observable`, `user`, `agents`, and `conflicts`
 are already injected REPL globals. Never import them as Python modules.
+`context.local` stores small JSON values scoped to a session, message, task,
+error, or current line. Only entries explicitly set with model_visible=True are
+included in a later relevant activation; use it sparingly.
 If `model_feedback` is present, your previous program was rejected. Correct the
 specific error and return one replacement Python program; do not discuss it.
 For a concise response to the latest message, prefer inbox.reply_to_latest(text):
@@ -308,6 +311,17 @@ class OpenAIAgentController:
             return None
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
         model_feedback = feedback_value.value if feedback_value is not None and feedback_value.value.get("active") else None
+        scopes = [("session", "")]
+        if relevant:
+            scopes.append(("message", str(relevant[-1].id)))
+        active_task = self.supervisor._active_tasks.get(self.agent)
+        if active_task is not None:
+            scopes.append(("task", str(active_task)))
+        if model_feedback is not None:
+            scopes.append(("error", str(relevant[-1].id)))
+        working_context = self.supervisor.working_context.active(self.agent, scopes)
+        if working_context:
+            activation[0]["working_context"] = working_context
         planned: PlannedTurn | None = None
         try:
             if on_phase is not None:

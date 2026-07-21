@@ -98,6 +98,21 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("\"message_id\"", request["input"])
         self.assertIn("Please assess this design.", request["input"])
 
+    def test_driver_includes_only_opted_in_local_context_for_active_message(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        message = session.send("Use my preferred format.")
+        session.evaluate(
+            f"context.local.set('format', 'brief', lifetime='message', scope_id='{message.id}', model_visible=True)"
+        )
+        client = FakeClient("inbox.ack(inbox.pending()[0]['id'])")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(model="test-model", client=client))
+
+        self.assertEqual(result.status, "ok")
+        request = json.loads(client.responses.calls[0]["input"])
+        self.assertEqual(request["activation"][0]["working_context"][0]["value"], "brief")
+
     def test_empty_model_program_is_presented_without_losing_the_message(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

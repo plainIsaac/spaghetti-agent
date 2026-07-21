@@ -14,6 +14,7 @@ from .journal import InboxJournal, Message
 from .kernel import ExecutionState, PersistentKernel
 from .observable_state import ObservableStateRegistry, ObservableValue
 from .tasks import TaskRegistry
+from .working_context import WorkingContext
 
 
 _STOP = object()
@@ -71,12 +72,14 @@ class ReplQueue:
 class Supervisor:
     """Coordinates explicit inbox sharing and schedules opt-in delivery."""
 
-    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None) -> None:
+    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None, working_context: WorkingContext | None = None) -> None:
         self.journal = journal
         self._owns_observable_state = observable_state is None
         self.observable_state = observable_state or ObservableStateRegistry()
         self.tasks = tasks or TaskRegistry()
         self._owns_tasks = tasks is None
+        self._owns_working_context = working_context is None
+        self.working_context = working_context or WorkingContext()
         self._repls: dict[str, ReplQueue] = {}
         self._handlers: dict[str, Callable[[Message], None]] = {}
         self._kernels: dict[str, PersistentKernel] = {}
@@ -111,6 +114,7 @@ class Supervisor:
         """Start a persistent agent namespace and hydrate its pending inbox."""
         if agent in self._kernels:
             raise ValueError(f"Agent kernel already exists: {agent}")
+        self.working_context.clear(agent, "session")
         kernel = PersistentKernel(
             agent,
             lambda kind, payload: self._handle_kernel_capability(agent, kind, payload),
@@ -207,10 +211,16 @@ class Supervisor:
             task_id = self._active_tasks.get(agent)
             if task_id is not None:
                 self.tasks.report_error(agent, task_id, state.error)
+        if state.status in {"completed", "failed", "cancelled"}:
+            self.working_context.clear_lifetime(agent, "line")
 
     def _handle_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
         if kind == "inbox.ack":
-            return self.journal.acknowledge(agent, int(payload["message_id"]))
+            message_id = int(payload["message_id"])
+            acknowledged = self.journal.acknowledge(agent, message_id)
+            if acknowledged:
+                self.working_context.clear(agent, "message", str(message_id))
+            return acknowledged
         if kind == "inbox.reply_to_latest":
             message_id = int(payload["message_id"])
             if not any(message.id == message_id for message in self.journal.pending(agent)):
@@ -219,7 +229,10 @@ class Supervisor:
             user_kernel = self._kernels.get("user")
             if user_kernel is not None:
                 user_kernel.deliver(message)
-            return self.journal.acknowledge(agent, message_id)
+            acknowledged = self.journal.acknowledge(agent, message_id)
+            if acknowledged:
+                self.working_context.clear(agent, "message", str(message_id))
+            return acknowledged
         if kind == "tasks.announce":
             task = self.tasks.announce(agent, str(payload["title"]), payload.get("details"))
             return {"id": task.id, "state": task.state, "title": task.title}
@@ -231,7 +244,14 @@ class Supervisor:
             task = self.tasks.transition(agent, _task_id(payload["task_id"]), "completed")
             if self._active_tasks.get(agent) == task.id:
                 self._active_tasks.pop(agent, None)
+            self.working_context.clear(agent, "task", str(task.id))
             return {"id": task.id, "state": task.state}
+        if kind == "working_context.set":
+            return self.working_context.set(agent, str(payload["key"]), payload["value"], str(payload.get("lifetime", "session")), str(payload.get("scope_id", "")), bool(payload.get("model_visible", False)))
+        if kind == "working_context.get":
+            return self.working_context.get(agent, str(payload["key"]), str(payload.get("lifetime", "session")), str(payload.get("scope_id", "")))
+        if kind == "working_context.clear":
+            return self.working_context.clear(agent, str(payload.get("lifetime", "session")), str(payload.get("scope_id", "")), payload.get("key"))
         if kind == "tasks.wait_for":
             task = self.tasks.wait_for(agent, _task_id(payload["task_id"]), str(payload["name"]), payload.get("equals"))
             return {"id": task.id, "state": task.state}
@@ -373,3 +393,5 @@ class Supervisor:
             self.observable_state.close()
         if self._owns_tasks:
             self.tasks.close()
+        if self._owns_working_context:
+            self.working_context.close()
