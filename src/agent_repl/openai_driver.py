@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 from datetime import datetime, timezone
-from threading import Event, Timer
+from threading import Event, Lock, Timer
 from typing import Any, Callable, Protocol
 
 from .kernel import KernelResult
@@ -104,6 +104,8 @@ class OpenAICompatibleAgentDriver:
     ) -> None:
         self.model = model
         self._client = client
+        self._client_is_external = client is not None
+        self._client_lock = Lock()
         self.provider_name = provider_name
         self.api_key_environment = api_key_environment
         self.base_url = base_url
@@ -141,6 +143,7 @@ class OpenAICompatibleAgentDriver:
             close = getattr(client, "close", None)
             if callable(close):
                 close()
+            self._discard_timed_out_client(client)
 
         deadline = Timer(self.request_timeout, close_overdue_client)
         deadline.daemon = True
@@ -155,6 +158,10 @@ class OpenAICompatibleAgentDriver:
             raw_output, resolved_model = self._read_stream(response, on_delta)
         except Exception as error:
             closed = datetime.now(timezone.utc)
+            if timed_out.is_set():
+                timeout = TimeoutError(f"provider stream exceeded {self.request_timeout:.1f}s total timeout")
+                self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds(), "error": f"{type(timeout).__name__}: {timeout}"})
+                raise timeout from error
             self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds(), "error": f"{type(error).__name__}: {error}"})
             raise
         finally:
@@ -167,6 +174,14 @@ class OpenAICompatibleAgentDriver:
         if not source.strip():
             raise RuntimeError("OpenAI returned an empty agent program")
         return PlannedTurn(source, request, raw_output, resolved_model or self.model)
+
+    def _discard_timed_out_client(self, client: ResponsesClient) -> None:
+        """Do not reuse a socket force-closed to stop a timed-out stream."""
+        if self._client_is_external:
+            return
+        with self._client_lock:
+            if self._client is client:
+                self._client = None
 
     @staticmethod
     def _read_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None]:
@@ -234,8 +249,10 @@ class OpenAICompatibleAgentDriver:
                     })
 
                 options["http_client"] = httpx.Client(event_hooks={"request": [log_request], "response": [log_response]})
-        self._client = OpenAI(**options)
-        return self._client
+        with self._client_lock:
+            if self._client is None:
+                self._client = OpenAI(**options)
+            return self._client
 
     def validate_configuration(self) -> None:
         """Fail fast for missing credentials without starting a background turn."""

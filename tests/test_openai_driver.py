@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
 import unittest
+from time import sleep
 
 from agent_repl import OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
 from agent_repl.session import ModelTurnWorker
@@ -45,6 +46,21 @@ class StreamClient:
         self.responses = StreamResponses(chunks)
 
 
+class SlowResponse:
+    def __iter__(self):
+        sleep(0.05)
+        raise RuntimeError("stream interrupted after client close")
+
+
+class ClosableSlowClient:
+    def __init__(self) -> None:
+        self.responses = SimpleNamespace(create=lambda **kwargs: SlowResponse())
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class OpenAIDriverTests(unittest.TestCase):
     def test_default_model_is_the_cost_sensitive_experiment_tier(self) -> None:
         self.assertEqual(DEFAULT_OPENAI_MODEL, "gpt-5.6-luna")
@@ -74,6 +90,15 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("opened_at", entries[1])
         self.assertIn("closed_at", entries[1])
         self.assertIn("duration_seconds", entries[1])
+
+    def test_total_stream_timeout_normalizes_socket_race_to_timeout_error(self) -> None:
+        client = ClosableSlowClient()
+        driver = OpenAIAgentDriver(client=client, request_timeout=0.01)
+
+        with self.assertRaisesRegex(TimeoutError, "provider stream exceeded"):
+            driver.plan([], None)
+
+        self.assertTrue(client.closed)
 
     def test_driver_uses_current_state_without_a_transcript(self) -> None:
         source = (
