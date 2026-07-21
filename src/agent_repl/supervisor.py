@@ -256,6 +256,7 @@ class Supervisor:
             if self._active_tasks.get(agent) == task.id:
                 self._active_tasks.pop(agent, None)
             self.working_context.clear(agent, "task", str(task.id))
+            self.workspace.release_task(agent, task.id)
             for message_id in self.tasks.messages(task.id):
                 if self.journal.acknowledge(agent, message_id):
                     self.working_context.clear(agent, "message", str(message_id))
@@ -263,21 +264,22 @@ class Supervisor:
         if kind == "workspace.list":
             return self.workspace.list(str(payload.get("path", ".")))
         if kind == "workspace.read_text":
-            return self.workspace.read_text(str(payload["path"]))
+            task_id = self._active_tasks.get(agent)
+            return self.workspace.read_text(str(payload["path"]), agent, task_id)
         if kind == "workspace.claim":
-            task_id = _task_id(payload["task_id"])
+            task_id = self._workspace_task_id(agent, payload.get("task_id"))
             task = self.tasks.get(task_id)
             if task is None or task.owner != agent or task.state != "working":
                 raise RuntimeError("workspace claims require an active task owned by this agent")
             return self.workspace.claim(agent, task_id, str(payload["path"]))
         if kind == "workspace.write_text":
-            task_id = _task_id(payload["task_id"])
+            task_id = self._workspace_task_id(agent, payload.get("task_id"))
             task = self.tasks.get(task_id)
             if task is None or task.owner != agent or task.state != "working":
                 raise RuntimeError("workspace writes require an active task owned by this agent")
             return self.workspace.write_text(agent, task_id, str(payload["path"]), str(payload["text"]), payload.get("expected_revision"))
         if kind == "workspace.changes":
-            task_id = _task_id(payload["task_id"])
+            task_id = self._workspace_task_id(agent, payload.get("task_id"))
             task = self.tasks.get(task_id)
             if task is None or task.owner != agent:
                 raise KeyError(task_id)
@@ -371,6 +373,14 @@ class Supervisor:
                 user_kernel.deliver(message)
             return {"id": message.id, "recipient": message.recipient}
         raise ValueError(f"Capability is not granted: {kind}")
+
+    def _workspace_task_id(self, agent: str, value: Any) -> int:
+        if value is None:
+            task_id = self._active_tasks.get(agent)
+            if task_id is None:
+                raise RuntimeError("workspace operation requires an active task")
+            return task_id
+        return _task_id(value)
 
     def _handle_user_capability(self, user: str, agent: str, kind: str, payload: dict[str, Any]) -> Any:
         if kind == "presentable.list":

@@ -73,8 +73,11 @@ work in a task, verify changed files after writing them, publish concise
 observable completion state, and send a concise completion reply. `print()` is
 debug output only and never a user-facing completion signal.
 For coordinated project files, use `workspace.list()`, `workspace.read_text()`,
-`workspace.claim(task, path)`, and `workspace.write_text(task, path, text,
-expected_revision)`. These managed writes are task-scoped and conflict-aware;
+and `workspace.write_text(path, text)` while a task is active. Reads remember
+the revision; writes claim new paths automatically and protect existing files
+with that revision. Use `workspace.claim(path, task_id=...)` or explicit
+`task_id=` / `expected_revision=` only for handoffs or conflict resolution.
+These managed writes are task-scoped and conflict-aware;
 ordinary Python filesystem I/O is unmanaged and must not be used for shared
 multi-agent files.
 

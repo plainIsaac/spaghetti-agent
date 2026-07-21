@@ -17,7 +17,7 @@ class RuntimeSpikeTests(unittest.TestCase):
             workspace = Workspace(directory)
             try:
                 workspace.claim("builder", 1, "app.txt")
-                written = workspace.write_text("builder", 1, "app.txt", "first", None)
+                written = workspace.write_text("builder", 1, "app.txt", "first")
                 read = workspace.read_text("app.txt")
 
                 self.assertEqual(read["text"], "first")
@@ -42,6 +42,25 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(session.supervisor.tasks.messages(1), [message.id])
         self.assertEqual(session.supervisor.journal.pending("agent"), [])
+
+    def test_workspace_uses_active_task_without_explicit_task_or_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = SingleAgentSession.open()
+            try:
+                session.supervisor.workspace.root = Path(directory)
+                result = session.evaluate(
+                    "task = tasks.announce('Create managed file')\n"
+                    "tasks.take(task)\n"
+                    "workspace.write_text('app.txt', 'first')\n"
+                    "_result = workspace.read_text('app.txt')['text']\n"
+                    "tasks.complete(task)"
+                )
+
+                self.assertEqual(result.status, "ok")
+                self.assertEqual(result.value, "first")
+                self.assertEqual((Path(directory) / "app.txt").read_text(encoding="utf-8"), "first")
+            finally:
+                session.close()
 
     def test_agent_can_announce_take_and_wait_for_observable_task_state(self) -> None:
         session = SingleAgentSession.open()

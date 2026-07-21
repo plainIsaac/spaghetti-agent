@@ -232,15 +232,16 @@ atomic write guarded by the expected revision:
 ```python
 task = tasks.announce("Build editor shell")
 tasks.take(task)
-workspace.claim(task, "writing_tool/index.html")
 before = workspace.read_text("writing_tool/index.html")
-workspace.write_text(task, "writing_tool/index.html", new_html, before["revision"])
+workspace.write_text("writing_tool/index.html", new_html)
 tasks.complete(task)
 ```
 
 Claims and writes are durable supervisor records. A second managed agent cannot
 claim the same path, and a stale revision produces a conflict instead of an
-overwrite. The current user-parity runtime still permits raw Python filesystem
+overwrite. In the normal path, the active task and last observed revision are
+inferred. Explicit task ids, claims, and expected revisions are reserved for
+handoffs and conflict resolution. The current user-parity runtime still permits raw Python filesystem
 I/O; that path is explicitly unmanaged and must not be used for coordinated
 multi-agent files. Container isolation remains the future enforcement boundary.
 

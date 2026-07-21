@@ -261,13 +261,13 @@ class Workspace:
     def read_text(self, path: str) -> dict[str, str]:
         return self._call_supervisor("workspace.read_text", {"path": path})
 
-    def claim(self, task_id: Any, path: str) -> dict[str, Any]:
+    def claim(self, path: str, task_id: Any = None) -> dict[str, Any]:
         return self._call_supervisor("workspace.claim", {"task_id": task_id, "path": path})
 
-    def write_text(self, task_id: Any, path: str, text: str, expected_revision: str | None = None) -> dict[str, str]:
+    def write_text(self, path: str, text: str, task_id: Any = None, expected_revision: str | None = None) -> dict[str, str]:
         return self._call_supervisor("workspace.write_text", {"task_id": task_id, "path": path, "text": text, "expected_revision": expected_revision})
 
-    def changes(self, task_id: Any) -> list[dict[str, Any]]:
+    def changes(self, task_id: Any = None) -> list[dict[str, Any]]:
         return self._call_supervisor("workspace.changes", {"task_id": task_id})
 
 
