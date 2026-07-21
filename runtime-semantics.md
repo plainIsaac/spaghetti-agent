@@ -245,6 +245,13 @@ handoffs and conflict resolution. The current user-parity runtime still permits 
 I/O; that path is explicitly unmanaged and must not be used for coordinated
 multi-agent files. Container isolation remains the future enforcement boundary.
 
+For delegated work, `workspace.branch()` turns the active task into an isolated
+managed changeset. Its writes remain off the main workspace until the agent
+uses `workspace.submit()`. A coordinator can inspect `workspace.diff(task_id)`
+and call `workspace.merge(task_id)`. Merge compares every changed file with the
+base revision recorded by the branch and rejects divergence rather than
+overwriting a newer main-workspace change.
+
 ## Durability, cancellation, and imports
 
 - Durable state is explicit: an event journal and snapshots for supported

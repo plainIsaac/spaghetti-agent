@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from difflib import unified_diff
 from hashlib import sha256
 from pathlib import Path
 import os
@@ -24,6 +25,11 @@ class Workspace:
         self._connection.execute("""CREATE TABLE IF NOT EXISTS workspace_observations (
             path TEXT NOT NULL, agent TEXT NOT NULL, task_id INTEGER NOT NULL, revision TEXT NOT NULL,
             PRIMARY KEY(path, agent, task_id))""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS workspace_branches (
+            task_id INTEGER PRIMARY KEY, agent TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS workspace_branch_files (
+            task_id INTEGER NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL, base_revision TEXT NOT NULL,
+            PRIMARY KEY(task_id, path))""")
         self._connection.commit()
 
     def list(self, relative: str = ".") -> list[str]:
@@ -36,7 +42,8 @@ class Workspace:
 
     def read_text(self, relative: str, agent: str | None = None, task_id: int | None = None) -> dict[str, str]:
         path = self._resolve(relative)
-        text = path.read_text(encoding="utf-8")
+        branch = self._branch_text(task_id, relative) if task_id is not None else None
+        text = branch if branch is not None else path.read_text(encoding="utf-8")
         revision = self._revision(text)
         if agent is not None and task_id is not None:
             with self._lock:
@@ -71,8 +78,9 @@ class Workspace:
                 )
             elif tuple(claim) != (agent, task_id):
                 raise RuntimeError(f"workspace conflict: {relative} is claimed by {claim[0]} task {claim[1]}")
+            existing_branch = self._connection.execute("SELECT text,base_revision FROM workspace_branch_files WHERE task_id=? AND path=?", (task_id, relative)).fetchone()
             exists = path.exists()
-            previous_text = path.read_text(encoding="utf-8") if exists else ""
+            previous_text = str(existing_branch[0]) if existing_branch is not None else (path.read_text(encoding="utf-8") if exists else "")
             previous = self._revision(previous_text)
             if expected_revision is None and exists:
                 observed = self._connection.execute(
@@ -84,6 +92,18 @@ class Workspace:
                 expected_revision = str(observed[0])
             if expected_revision is not None and expected_revision != previous:
                 raise RuntimeError(f"workspace conflict: {relative} changed (expected {expected_revision}, found {previous})")
+            if self._is_branch(task_id):
+                self._connection.execute(
+                    "INSERT OR REPLACE INTO workspace_branch_files(task_id,path,text,base_revision) VALUES(?,?,?,?)",
+                    (task_id, relative, text, str(existing_branch[1]) if existing_branch is not None else self._revision(path.read_text(encoding="utf-8") if exists else "")),
+                )
+                revision = self._revision(text)
+                self._connection.execute(
+                    "INSERT OR REPLACE INTO workspace_observations(path,agent,task_id,revision) VALUES(?,?,?,?)",
+                    (relative, agent, task_id, revision),
+                )
+                self._connection.commit()
+                return {"path": relative, "previous_revision": previous, "revision": revision}
             path.parent.mkdir(parents=True, exist_ok=True)
             with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as temporary:
                 temporary.write(text)
@@ -113,6 +133,49 @@ class Workspace:
             self._connection.commit()
             return cursor.rowcount
 
+    def branch(self, agent: str, task_id: int) -> dict[str, object]:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO workspace_branches(task_id,agent,state,created_at) VALUES(?,?,?,?)",
+                (task_id, agent, "working", datetime.now(UTC).isoformat()),
+            )
+            self._connection.commit()
+        return {"task_id": task_id, "state": "working"}
+
+    def diff(self, task_id: int) -> list[dict[str, str]]:
+        rows = self._connection.execute("SELECT path,text FROM workspace_branch_files WHERE task_id=? ORDER BY path", (task_id,)).fetchall()
+        result: list[dict[str, str]] = []
+        for relative, branch_text in rows:
+            path = self._resolve(str(relative))
+            main_text = path.read_text(encoding="utf-8") if path.exists() else ""
+            diff = "".join(unified_diff(main_text.splitlines(True), str(branch_text).splitlines(True), fromfile=f"main/{relative}", tofile=f"branch/{relative}"))
+            result.append({"path": str(relative), "diff": diff})
+        return result
+
+    def submit(self, agent: str, task_id: int) -> dict[str, object]:
+        with self._lock:
+            self._connection.execute("UPDATE workspace_branches SET state='submitted' WHERE task_id=? AND agent=?", (task_id, agent))
+            self._connection.commit()
+        return {"task_id": task_id, "state": "submitted", "files": len(self.diff(task_id))}
+
+    def merge(self, task_id: int) -> dict[str, object]:
+        with self._lock:
+            branch = self._connection.execute("SELECT state FROM workspace_branches WHERE task_id=?", (task_id,)).fetchone()
+            if branch is None or branch[0] != "submitted":
+                raise RuntimeError("workspace merge requires a submitted branch")
+            rows = self._connection.execute("SELECT path,text,base_revision FROM workspace_branch_files WHERE task_id=?", (task_id,)).fetchall()
+            for relative, _text, base in rows:
+                path = self._resolve(str(relative))
+                current = self._revision(path.read_text(encoding="utf-8") if path.exists() else "")
+                if current != base:
+                    raise RuntimeError(f"workspace merge conflict: {relative} changed since branch")
+            for relative, text, _base in rows:
+                path = self._resolve(str(relative)); path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(str(text), encoding="utf-8")
+            self._connection.execute("UPDATE workspace_branches SET state='merged' WHERE task_id=?", (task_id,))
+            self._connection.commit()
+        return {"task_id": task_id, "state": "merged", "files": len(rows)}
+
     def close(self) -> None:
         self._connection.close()
 
@@ -121,6 +184,13 @@ class Workspace:
         if candidate != self.root and self.root not in candidate.parents:
             raise ValueError("workspace path must stay within its root")
         return candidate
+
+    def _is_branch(self, task_id: int) -> bool:
+        return self._connection.execute("SELECT 1 FROM workspace_branches WHERE task_id=? AND state='working'", (task_id,)).fetchone() is not None
+
+    def _branch_text(self, task_id: int, relative: str) -> str | None:
+        row = self._connection.execute("SELECT text FROM workspace_branch_files WHERE task_id=? AND path=?", (task_id, relative)).fetchone()
+        return None if row is None else str(row[0])
 
     @staticmethod
     def _revision(text: str) -> str:

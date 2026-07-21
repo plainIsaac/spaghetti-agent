@@ -284,6 +284,16 @@ class Supervisor:
             if task is None or task.owner != agent:
                 raise KeyError(task_id)
             return self.workspace.changes(task_id)
+        if kind == "workspace.branch":
+            task_id = self._workspace_task_id(agent, payload.get("task_id"))
+            return self.workspace.branch(agent, task_id)
+        if kind == "workspace.diff":
+            return self.workspace.diff(self._workspace_task_id(agent, payload.get("task_id")))
+        if kind == "workspace.submit":
+            task_id = self._workspace_task_id(agent, payload.get("task_id"))
+            return self.workspace.submit(agent, task_id)
+        if kind == "workspace.merge":
+            return self.workspace.merge(_task_id(payload["task_id"]))
         if kind == "working_context.set":
             return self.working_context.set(agent, str(payload["key"]), payload["value"], str(payload.get("lifetime", "session")), str(payload.get("scope_id", "")), bool(payload.get("model_visible", False)))
         if kind == "working_context.get":

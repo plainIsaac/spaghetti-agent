@@ -270,6 +270,18 @@ class Workspace:
     def changes(self, task_id: Any = None) -> list[dict[str, Any]]:
         return self._call_supervisor("workspace.changes", {"task_id": task_id})
 
+    def branch(self, task_id: Any = None) -> dict[str, Any]:
+        return self._call_supervisor("workspace.branch", {"task_id": task_id})
+
+    def diff(self, task_id: Any = None) -> list[dict[str, str]]:
+        return self._call_supervisor("workspace.diff", {"task_id": task_id})
+
+    def submit(self, task_id: Any = None) -> dict[str, Any]:
+        return self._call_supervisor("workspace.submit", {"task_id": task_id})
+
+    def merge(self, task_id: Any) -> dict[str, Any]:
+        return self._call_supervisor("workspace.merge", {"task_id": task_id})
+
 
 class ContextTasks:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:

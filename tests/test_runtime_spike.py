@@ -29,6 +29,24 @@ class RuntimeSpikeTests(unittest.TestCase):
             finally:
                 workspace.close()
 
+    def test_workspace_branch_isolated_until_submitted_and_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            try:
+                Path(directory, "app.txt").write_text("main", encoding="utf-8")
+                workspace.branch("builder", 1)
+                workspace.claim("builder", 1, "app.txt")
+                workspace.read_text("app.txt", "builder", 1)
+                workspace.write_text("builder", 1, "app.txt", "branch")
+
+                self.assertEqual(Path(directory, "app.txt").read_text(encoding="utf-8"), "main")
+                self.assertIn("-main", workspace.diff(1)[0]["diff"])
+                workspace.submit("builder", 1)
+                workspace.merge(1)
+                self.assertEqual(Path(directory, "app.txt").read_text(encoding="utf-8"), "branch")
+            finally:
+                workspace.close()
+
     def test_completed_task_acknowledges_its_bound_source_message(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)
