@@ -95,7 +95,7 @@ def main() -> None:
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
     parser.add_argument("--model", help="Provider model override")
-    parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider request timeout in seconds")
+    parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider first-token and stream-idle timeout in seconds")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
     session = SingleAgentSession.open(

@@ -150,8 +150,10 @@ It defaults to `openrouter/free`, which selects from OpenRouter's available free
 models. Use it for cheap, non-deterministic smoke tests only; provider selection,
 availability, and rate limits can vary. Use `--model provider/model:free` to
 pin a specific free variant when reproducibility matters more than breadth.
-Provider requests default to a 30-second timeout with no automatic retry; adjust
-the limit deliberately with `--request-timeout` when a model warrants it.
+Provider requests default to a 30-second first-token and stream-idle timeout
+with no automatic retry. The timer resets after each streamed text token, so a
+healthy long response is not cut off; adjust the limit deliberately with
+`--request-timeout` when a model warrants it.
 
 The process experiment deliberately has no durable Python heap. That is not a
 missing implementation detail: it makes the remaining design question explicit.

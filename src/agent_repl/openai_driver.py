@@ -137,17 +137,45 @@ class OpenAICompatibleAgentDriver:
         self._append_http_log({"timestamp": opened.isoformat(), "event": "stream_opened", "provider": self.provider_name, "model": self.model})
         timed_out = Event()
         client = self._get_client()
+        deadline_lock = Lock()
+        deadline: Timer | None = None
+        deadline_generation = 0
 
-        def close_overdue_client() -> None:
+        def close_overdue_client(generation: int) -> None:
+            with deadline_lock:
+                if generation != deadline_generation:
+                    return
             timed_out.set()
             close = getattr(client, "close", None)
             if callable(close):
                 close()
             self._discard_timed_out_client(client)
 
-        deadline = Timer(self.request_timeout, close_overdue_client)
-        deadline.daemon = True
-        deadline.start()
+        def arm_idle_deadline() -> None:
+            nonlocal deadline, deadline_generation
+            with deadline_lock:
+                deadline_generation += 1
+                if deadline is not None:
+                    deadline.cancel()
+                deadline = Timer(self.request_timeout, close_overdue_client, args=(deadline_generation,))
+                deadline.daemon = True
+                deadline.start()
+
+        def disarm_idle_deadline() -> None:
+            nonlocal deadline_generation
+            with deadline_lock:
+                deadline_generation += 1
+                if deadline is not None:
+                    deadline.cancel()
+
+        def received_delta(text: str) -> None:
+            # A healthy stream may run longer than the timeout; only silence is
+            # a failure. This first arm also acts as the first-token deadline.
+            arm_idle_deadline()
+            if on_delta is not None:
+                on_delta(text)
+
+        arm_idle_deadline()
         try:
             response = client.responses.create(
                 model=self.model,
@@ -155,19 +183,19 @@ class OpenAICompatibleAgentDriver:
                 input=json.dumps(request),
                 stream=True,
             )
-            raw_output, resolved_model = self._read_stream(response, on_delta)
+            raw_output, resolved_model = self._read_stream(response, received_delta)
         except Exception as error:
             closed = datetime.now(timezone.utc)
             if timed_out.is_set():
-                timeout = TimeoutError(f"provider stream exceeded {self.request_timeout:.1f}s total timeout")
+                timeout = TimeoutError(f"provider stream was idle for {self.request_timeout:.1f}s before the first or next token")
                 self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds(), "error": f"{type(timeout).__name__}: {timeout}"})
                 raise timeout from error
             self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds(), "error": f"{type(error).__name__}: {error}"})
             raise
         finally:
-            deadline.cancel()
+            disarm_idle_deadline()
         if timed_out.is_set():
-            raise TimeoutError(f"provider stream exceeded {self.request_timeout:.1f}s total timeout")
+            raise TimeoutError(f"provider stream was idle for {self.request_timeout:.1f}s before the first or next token")
         closed = datetime.now(timezone.utc)
         self._append_http_log({"timestamp": closed.isoformat(), "event": "stream_closed", "opened_at": opened.isoformat(), "closed_at": closed.isoformat(), "duration_seconds": (closed - opened).total_seconds()})
         source = self._strip_code_fence(raw_output)

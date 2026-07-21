@@ -61,6 +61,18 @@ class ClosableSlowClient:
         self.closed = True
 
 
+class DelayedStreamResponse:
+    def __iter__(self):
+        yield SimpleNamespace(type="response.output_text.delta", delta="first")
+        sleep(0.03)
+        yield SimpleNamespace(type="response.output_text.delta", delta=" second")
+
+
+class DelayedStreamClient:
+    def __init__(self) -> None:
+        self.responses = SimpleNamespace(create=lambda **kwargs: DelayedStreamResponse())
+
+
 class OpenAIDriverTests(unittest.TestCase):
     def test_default_model_is_the_cost_sensitive_experiment_tier(self) -> None:
         self.assertEqual(DEFAULT_OPENAI_MODEL, "gpt-5.6-luna")
@@ -91,14 +103,21 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("closed_at", entries[1])
         self.assertIn("duration_seconds", entries[1])
 
-    def test_total_stream_timeout_normalizes_socket_race_to_timeout_error(self) -> None:
+    def test_stream_idle_timeout_normalizes_socket_race_to_timeout_error(self) -> None:
         client = ClosableSlowClient()
         driver = OpenAIAgentDriver(client=client, request_timeout=0.01)
 
-        with self.assertRaisesRegex(TimeoutError, "provider stream exceeded"):
+        with self.assertRaisesRegex(TimeoutError, "provider stream was idle"):
             driver.plan([], None)
 
         self.assertTrue(client.closed)
+
+    def test_stream_idle_timeout_resets_after_each_token(self) -> None:
+        driver = OpenAIAgentDriver(client=DelayedStreamClient(), request_timeout=0.04)
+
+        planned = driver.plan([], None)
+
+        self.assertEqual(planned.source, "first second")
 
     def test_driver_uses_current_state_without_a_transcript(self) -> None:
         source = (
