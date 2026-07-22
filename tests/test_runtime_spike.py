@@ -214,6 +214,10 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.value["agent"], "reviewer")
         self.assertIn("Task 1 assigned", session.supervisor.journal.pending("reviewer")[0].text)
 
+        retried = session.evaluate("_result = agents.spawn('reviewer', 'review', 'Review the editor branch')")
+        self.assertTrue(retried.value["reused"])
+        self.assertEqual(retried.value["task_id"], result.value["task_id"])
+
         malformed = session.evaluate("agents.spawn('bad', 'review', tasks.announce('wrong shape'))")
         self.assertEqual(malformed.status, "error")
         self.assertIn("title string", malformed.error)

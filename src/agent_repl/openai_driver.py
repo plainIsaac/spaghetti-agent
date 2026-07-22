@@ -45,6 +45,10 @@ are already injected REPL globals. Never import them as Python modules.
 `context.local` stores small JSON values scoped to a session, message, task,
 error, or current line. Only entries explicitly set with model_visible=True are
 included in a later relevant activation; use it sparingly.
+It is an API, not a dictionary: use `context.local.set(key, value, model_visible=True)`,
+`context.local.get(key)`, and `context.local.clear(key=key)`; never use brackets,
+assignment, `.pop()`, or `.get()` on inbox messages. Inbox messages support both
+`message["id"]` and `message["message_id"]` as aliases.
 If `model_feedback` is present, your previous program was rejected. Correct the
 specific error and return one replacement Python program; do not discuss it.
 For a concise response to the latest message, prefer inbox.reply_to_latest(text):

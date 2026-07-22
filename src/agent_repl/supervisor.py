@@ -406,11 +406,14 @@ class Supervisor:
             if not self.allow_subagents or self._agent_spawner is None:
                 raise RuntimeError("subagent creation is disabled")
             child = str(payload["name"])
-            if child in self._repls:
-                raise ValueError(f"Agent already exists: {child}")
             task_title = payload["task"]
             if not isinstance(task_title, str) or not task_title.strip():
                 raise TypeError("agents.spawn task must be a non-empty title string; it creates the child task itself")
+            if child in self._repls:
+                existing = self.tasks.delegated_task(agent, child, task_title)
+                if existing is not None:
+                    return {"agent": child, "task_id": existing.id, "role": payload["role"], "reused": True}
+                raise ValueError(f"Agent already exists: {child}")
             self._agent_spawner(child, str(payload["role"]))
             task = self.tasks.announce(child, task_title, payload.get("details"))
             self.tasks.set_delegator(task.id, agent)

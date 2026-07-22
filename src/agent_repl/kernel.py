@@ -174,6 +174,9 @@ class InboxMessage(dict[str, Any]):
     def message_id(self) -> int | None:
         return self["id"]
 
+    def __getitem__(self, key: str) -> Any:
+        return super().__getitem__("id" if key == "message_id" else key)
+
 
 class Observable:
     """The agent's explicit, presentable-state publishing capability."""
