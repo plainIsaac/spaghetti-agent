@@ -38,6 +38,10 @@ When the default context window feature is enabled, activation also carries a
 small recent conversation and pending-work window for continuity. Treat it as a
 convenience, not the whole state; do not ask the user to repeat information
 already in that window or obtainable through `context.messages.with_party("user")`.
+Activation task summaries are authoritative working context: `active_tasks`
+contains your active task details, and coordinators also receive
+`delegated_tasks` with child ownership, state, and details. Use these directly
+before asking the user or creating replacement work.
 For an inbox activation, read the actual message from `inbox.pending()` before
 replying. Do not give a canned acknowledgement or claim you lack its contents.
 `inbox`, `tasks`, `workspace`, `context`, `observable`, `user`, `agents`, and `conflicts`
@@ -416,6 +420,9 @@ class OpenAIAgentController:
             active_tasks = self._active_task_summary()
             if active_tasks:
                 activation[0]["active_tasks"] = active_tasks
+            delegated_tasks = self._delegated_task_summary()
+            if delegated_tasks:
+                activation[0]["delegated_tasks"] = delegated_tasks
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
         model_feedback = feedback_value.value if feedback_value is not None and feedback_value.value.get("active") else None
         scopes = [("session", "")]
@@ -514,9 +521,15 @@ class OpenAIAgentController:
 
     def _active_task_summary(self) -> list[dict[str, Any]]:
         return [
-            {"id": task.id, "title": task.title, "state": task.state}
+            {"id": task.id, "title": task.title, "state": task.state, "details": task.details}
             for task in self.supervisor.tasks.list(self.agent)
             if task.state != "completed"
+        ][-DEFAULT_PENDING_WORK_ITEMS:]
+
+    def _delegated_task_summary(self) -> list[dict[str, Any]]:
+        return [
+            {"id": task.id, "owner": task.owner, "title": task.title, "state": task.state, "details": task.details}
+            for task in self.supervisor.tasks.delegated(self.agent)
         ][-DEFAULT_PENDING_WORK_ITEMS:]
 
     @staticmethod

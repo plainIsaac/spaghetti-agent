@@ -346,6 +346,16 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("first attempt failed", retry_input["model_feedback"]["error"])
         self.assertEqual(session.user_messages()[0].text, "Recovered after retry.")
 
+    def test_activation_includes_active_task_details(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.evaluate("task = tasks.announce('Implement file', {'path': 'app.py', 'content': 'print(1)'})\ntasks.take(task)")
+        session.send("Continue.")
+        client = FakeClient("inbox.ack(inbox.pending()[-1]['id'])")
+        session.run_openai_turn(OpenAIAgentDriver(client=client))
+        activation = json.loads(client.responses.calls[0]["input"])["activation"][0]
+        self.assertEqual(activation["active_tasks"][0]["details"]["path"], "app.py")
+
     def test_task_wakeup_dispatches_a_model_turn_without_user_input(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)
