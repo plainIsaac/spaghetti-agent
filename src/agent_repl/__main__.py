@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 from .openai_driver import (
     DEFAULT_OPENAI_MODEL,
@@ -88,6 +89,8 @@ def _load_project_environment() -> None:
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     _load_project_environment()
     parser = argparse.ArgumentParser(description="Agent REPL single-agent session")
     parser.add_argument("--data-dir", type=Path, default=Path(".agent-repl"), help="Directory for durable session state")

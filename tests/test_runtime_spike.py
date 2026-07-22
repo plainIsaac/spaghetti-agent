@@ -135,6 +135,15 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.value, ("Investigate parser", 1, "ready"))
 
+    def test_subagent_can_pull_shared_user_context(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("The greeting must use the user's name.")
+        session.supervisor.create_repl("builder")
+        builder = session.supervisor.start_agent_kernel("builder")
+        result = builder.evaluate("_result = context.user.messages()")
+        self.assertEqual(result.value[0]["text"], "The greeting must use the user's name.")
+
     def test_agent_can_manage_scoped_local_context(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

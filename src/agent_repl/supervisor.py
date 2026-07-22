@@ -6,6 +6,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import json
 import queue
 import threading
 from typing import Any
@@ -94,6 +95,7 @@ class Supervisor:
         self._kernels: dict[str, PersistentKernel] = {}
         self._active_tasks: dict[str, int] = {}
         self._agent_spawner: Callable[[str, str], None] | None = None
+        self._user_agent = "agent"
         self.allow_subagents = True
         self._turn_messages: dict[str, list[int]] = {}
         self._scheduler_running = threading.Event()
@@ -160,6 +162,7 @@ class Supervisor:
             raise ValueError(f"User kernel already exists: {user}")
         if user not in self._repls:
             self.create_repl(user)
+        self._user_agent = agent
         kernel = PersistentKernel(
             user,
             lambda kind, payload: self._handle_user_capability(user, agent, kind, payload),
@@ -280,7 +283,7 @@ class Supervisor:
                 raise KeyError(f"Unknown agent: {recipient}")
             task = self.tasks.announce(recipient, str(payload["title"]), payload.get("details"))
             self.tasks.set_delegator(task.id, agent)
-            message = self.journal.append(recipient=recipient, sender="supervisor", text=f"Task {task.id} assigned: {task.title}")
+            message = self.journal.append(recipient=recipient, sender="supervisor", text=self._task_assignment_message(task))
             kernel = self._kernels.get(recipient)
             if kernel is not None:
                 kernel.deliver(message)
@@ -389,6 +392,8 @@ class Supervisor:
         if kind == "context.messages.with_party":
             party = str(payload["party"])
             return [self._conversation_data(message) for message in self.journal.conversation(agent, party)]
+        if kind == "context.user.messages":
+            return [self._conversation_data(message) for message in self.journal.conversation("user", self._user_agent)]
         if kind == "context.agents.list":
             return sorted(name for name in self._repls if name != "user")
         if kind == "context.conflicts.related":
@@ -417,7 +422,7 @@ class Supervisor:
             self._agent_spawner(child, str(payload["role"]))
             task = self.tasks.announce(child, task_title, payload.get("details"))
             self.tasks.set_delegator(task.id, agent)
-            message = self.journal.append(recipient=child, sender="supervisor", text=f"Task {task.id} assigned: {task.title}")
+            message = self.journal.append(recipient=child, sender="supervisor", text=self._task_assignment_message(task))
             self._kernels[child].deliver(message)
             return {"agent": child, "task_id": task.id, "role": payload["role"]}
         if kind == "conflicts.announce":
@@ -458,6 +463,11 @@ class Supervisor:
                 kernel = self._kernels.get(watcher.recipient)
                 if kernel is not None:
                     kernel.deliver(message)
+
+    @staticmethod
+    def _task_assignment_message(task: Any) -> str:
+        details = json.dumps(task.details, ensure_ascii=False, default=str)
+        return f"Task {task.id} assigned: {task.title}\nTask details: {details}"
 
     def _workspace_task_id(self, agent: str, value: Any) -> int:
         if value is None:

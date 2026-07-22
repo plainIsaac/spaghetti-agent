@@ -142,7 +142,11 @@ class KernelInbox:
 
     def ack(self, message_id: int) -> bool:
         """Acknowledge a processed message through the supervisor."""
+        if not isinstance(message_id, int):
+            raise TypeError("inbox.ack expects an integer message id; use message['id'] or message.id")
         acknowledged = bool(self._call_supervisor("inbox.ack", {"message_id": message_id}))
+        if not acknowledged:
+            raise KeyError(f"inbox.ack could not find pending message {message_id}; inspect inbox.pending()")
         if acknowledged:
             self._messages = [message for message in self._messages if message["id"] != message_id]
         return acknowledged
@@ -150,7 +154,7 @@ class KernelInbox:
     def reply_to_latest(self, text: str) -> bool:
         """Reply to and acknowledge the newest pending message in one operation."""
         if not self._messages:
-            return False
+            raise RuntimeError("inbox.reply_to_latest requires a pending message; inspect inbox.pending() first")
         message = self._messages[-1]
         replied = bool(
             self._call_supervisor(
@@ -327,7 +331,19 @@ class ContextMessages:
         self._call_supervisor = call_supervisor
 
     def with_party(self, party: str) -> list[dict[str, Any]]:
+        if not isinstance(party, str) or not party:
+            raise ValueError("context.messages.with_party expects a non-empty agent or user name")
         return self._call_supervisor("context.messages.with_party", {"party": party})
+
+
+class ContextUser:
+    """Shared user-facing history available to every agent, including children."""
+
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def messages(self) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.user.messages", {})
 
 
 class ContextAgents:
@@ -368,6 +384,7 @@ class Context:
         self.errors = ContextErrors(call_supervisor)
         self.observations = ContextObservations(call_supervisor)
         self.messages = ContextMessages(call_supervisor)
+        self.user = ContextUser(call_supervisor)
         self.agents = ContextAgents(call_supervisor)
         self.conflicts = ContextConflicts(call_supervisor)
         self.local = LocalContext(call_supervisor)
