@@ -80,6 +80,8 @@ and `workspace.write_text(path, text)` while a task is active. Reads remember
 the revision; writes claim new paths automatically and protect existing files
 with that revision. Use `workspace.claim(path, task_id=...)` or explicit
 `task_id=` / `expected_revision=` only for handoffs or conflict resolution.
+`workspace.read_text(path)` returns `{"text": "...", "revision": "..."}`:
+use `workspace.read_text(path)["text"]` when verifying or editing file text.
 These managed writes are task-scoped and conflict-aware;
 ordinary Python filesystem I/O is unmanaged and must not be used for shared
 multi-agent files.
@@ -450,6 +452,21 @@ class OpenAIAgentController:
                 {"active": False, "status": "resolved"},
                 presenter="error",
                 show_by_default=False,
+            )
+        else:
+            self.supervisor.publish_state(
+                self.agent,
+                "model_error",
+                {
+                    "active": True,
+                    "error": result.error or "model program evaluation failed",
+                    "instruction": "Your program ran but failed. Inspect the error, preserve completed work, and return one corrected Python program.",
+                    "rejected_output": planned.raw_output,
+                },
+                presenter="error",
+                label="Model evaluation error",
+                show_by_default=False,
+                priority=100,
             )
         return result
 

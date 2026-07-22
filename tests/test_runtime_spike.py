@@ -80,6 +80,34 @@ class RuntimeSpikeTests(unittest.TestCase):
             finally:
                 session.close()
 
+    def test_static_workspace_watcher_runs_fixed_runtime_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = SingleAgentSession.open()
+            try:
+                session.supervisor.workspace.root = Path(directory)
+                session.supervisor.create_repl("coordinator")
+                session.supervisor.start_agent_kernel("coordinator")
+                session.evaluate("static_agents.start_workspace_watcher(['*.txt'], 'coordinator', 'Review managed change')")
+                session.evaluate("task=tasks.announce('Write')\ntasks.take(task)\nworkspace.write_text('note.txt', 'x')")
+                self.assertEqual(session.supervisor.journal.pending("coordinator")[0].text, "Review managed change")
+            finally:
+                session.close()
+
+    def test_static_workspace_watcher_is_durable_deduplicated_and_stoppable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state = str(Path(directory) / "workspace.sqlite")
+            root = Path(directory) / "project"; root.mkdir()
+            workspace = Workspace(root, state)
+            try:
+                watcher = workspace.add_workspace_watcher(["*.txt"], "coordinator", "Review")
+                self.assertEqual(workspace.workspace_watchers()[0]["id"], watcher["id"])
+                self.assertTrue(workspace.record_workspace_watcher_delivery(watcher["id"], "note.txt", "revision"))
+                self.assertFalse(workspace.record_workspace_watcher_delivery(watcher["id"], "note.txt", "revision"))
+                self.assertTrue(workspace.stop_workspace_watcher(watcher["id"]))
+                self.assertEqual(workspace.workspace_watchers(), [])
+            finally:
+                workspace.close()
+
     def test_agent_can_announce_take_and_wait_for_observable_task_state(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

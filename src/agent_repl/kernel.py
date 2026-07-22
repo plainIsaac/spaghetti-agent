@@ -378,6 +378,20 @@ class Agents:
         return self._call_supervisor("agents.spawn", {"name": name, "role": role, "task": task, "details": details})
 
 
+class StaticAgents:
+    def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
+
+    def start_workspace_watcher(self, paths: list[str], recipient: str, message: str) -> dict[str, Any]:
+        return self._call_supervisor("static_agents.workspace_watcher", {"paths": paths, "recipient": recipient, "message": message})
+
+    def list(self, active_only: bool = True) -> list[dict[str, Any]]:
+        return self._call_supervisor("static_agents.list", {"active_only": active_only})
+
+    def stop(self, watcher_id: int) -> bool:
+        return self._call_supervisor("static_agents.stop", {"watcher_id": watcher_id})
+
+
 class Conflicts:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
         self._call_supervisor = call_supervisor
@@ -466,6 +480,7 @@ def _kernel_main(
         namespace["workspace"] = Workspace(call_supervisor)
         namespace["context"] = Context(call_supervisor)
         namespace["agents"] = Agents(call_supervisor)
+        namespace["static_agents"] = StaticAgents(call_supervisor)
         namespace["conflicts"] = Conflicts(call_supervisor)
     elif role == "user":
         namespace["presentable"] = PresentableState(call_supervisor)

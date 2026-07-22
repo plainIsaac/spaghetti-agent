@@ -16,6 +16,7 @@ from .observable_state import ObservableStateRegistry, ObservableValue
 from .tasks import TaskRegistry
 from .working_context import WorkingContext
 from .workspace import Workspace
+from .static_agents import WorkspaceWatcher
 
 
 _STOP = object()
@@ -83,6 +84,11 @@ class Supervisor:
         self.working_context = working_context or WorkingContext()
         self._owns_workspace = workspace is None
         self.workspace = workspace or Workspace(".")
+        self._static_watchers: list[WorkspaceWatcher] = [
+            WorkspaceWatcher(int(row["id"]), tuple(row["paths"]), str(row["recipient"]), str(row["message"]))
+            for row in self.workspace.workspace_watchers()
+        ]
+        self.workspace.set_write_observer(self._workspace_written)
         self._repls: dict[str, ReplQueue] = {}
         self._handlers: dict[str, Callable[[Message], None]] = {}
         self._kernels: dict[str, PersistentKernel] = {}
@@ -230,6 +236,22 @@ class Supervisor:
             self.working_context.clear_lifetime(agent, "line")
 
     def _handle_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
+        if kind == "static_agents.workspace_watcher":
+            recipient = str(payload["recipient"])
+            if recipient not in self._repls:
+                raise KeyError(f"Unknown agent: {recipient}")
+            stored = self.workspace.add_workspace_watcher([str(path) for path in payload["paths"]], recipient, str(payload["message"]))
+            watcher = WorkspaceWatcher(int(stored["id"]), tuple(stored["paths"]), recipient, str(stored["message"]))
+            self._static_watchers.append(watcher)
+            return stored
+        if kind == "static_agents.list":
+            return self.workspace.workspace_watchers(active_only=bool(payload.get("active_only", True)))
+        if kind == "static_agents.stop":
+            watcher_id = int(payload["watcher_id"])
+            stopped = self.workspace.stop_workspace_watcher(watcher_id)
+            if stopped:
+                self._static_watchers = [watcher for watcher in self._static_watchers if watcher.id != watcher_id]
+            return stopped
         if kind == "inbox.ack":
             message_id = int(payload["message_id"])
             acknowledged = self.journal.acknowledge(agent, message_id)
@@ -417,6 +439,14 @@ class Supervisor:
                 user_kernel.deliver(message)
             return {"id": message.id, "recipient": message.recipient}
         raise ValueError(f"Capability is not granted: {kind}")
+
+    def _workspace_written(self, path: str, task_id: int, revision: str) -> None:
+        for watcher in self._static_watchers:
+            if watcher.matches(path) and self.workspace.record_workspace_watcher_delivery(watcher.id, path, revision):
+                message = self.journal.append(recipient=watcher.recipient, sender="static:workspace_watcher", text=watcher.message)
+                kernel = self._kernels.get(watcher.recipient)
+                if kernel is not None:
+                    kernel.deliver(message)
 
     def _workspace_task_id(self, agent: str, value: Any) -> int:
         if value is None:

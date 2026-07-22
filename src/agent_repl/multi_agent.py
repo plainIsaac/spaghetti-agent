@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 from .journal import InboxJournal, Message
 from .kernel import KernelResult
@@ -16,11 +17,16 @@ from .workspace import Workspace
 
 
 class _AgentTurnSession:
-    def __init__(self, supervisor: Supervisor, agent: str) -> None:
-        self.supervisor, self.agent = supervisor, agent
+    def __init__(self, supervisor: Supervisor, agent: str, log: list[dict]) -> None:
+        self.supervisor, self.agent, self._log = supervisor, agent, log
 
     def run_openai_turn(self, driver: OpenAICompatibleAgentDriver, on_delta=None, on_phase=None, default_context_window: bool = True) -> KernelResult | None:
-        return OpenAIAgentController(self.supervisor, driver, self.agent, default_context_window=default_context_window).run_turn(on_delta=on_delta, on_phase=on_phase)
+        def program(planned) -> None:
+            self._log.append({"event": "model_program", "agent": self.agent, "timestamp": datetime.now(timezone.utc).isoformat(), "source": planned.source, "raw_output": planned.raw_output, "resolved_model": planned.resolved_model})
+        result = OpenAIAgentController(self.supervisor, driver, self.agent, default_context_window=default_context_window).run_turn(on_delta=on_delta, on_phase=on_phase, on_program=program)
+        if result is not None:
+            self._log.append({"event": "repl_result", "agent": self.agent, "timestamp": datetime.now(timezone.utc).isoformat(), "status": result.status, "error": result.error})
+        return result
 
 
 class MultiAgentSession:
@@ -34,6 +40,7 @@ class MultiAgentSession:
             self.supervisor.start_agent_kernel(agent)
         self.supervisor.start_user_kernel(agent=coordinator)
         self._workers: dict[str, ModelTurnWorker] = {}
+        self._logs: dict[str, list[dict]] = {agent: [] for agent in self.agents}
         self._drivers: dict[str, OpenAICompatibleAgentDriver] = {}
 
     @classmethod
@@ -47,7 +54,7 @@ class MultiAgentSession:
         if missing:
             raise ValueError(f"Missing model drivers for: {', '.join(sorted(missing))}")
         for agent in self.agents:
-            self._workers[agent] = ModelTurnWorker(_AgentTurnSession(self.supervisor, agent), drivers[agent], default_context_window=default_context_window)
+            self._workers[agent] = ModelTurnWorker(_AgentTurnSession(self.supervisor, agent, self._logs[agent]), drivers[agent], default_context_window=default_context_window)
         self._drivers = drivers
         self.supervisor.set_agent_spawner(self._spawn_agent)
 
@@ -57,7 +64,8 @@ class MultiAgentSession:
         self.agents.append(agent)
         self.supervisor.create_repl(agent); self.supervisor.start_agent_kernel(agent)
         self._drivers[agent] = driver
-        self._workers[agent] = ModelTurnWorker(_AgentTurnSession(self.supervisor, agent), driver)
+        self._logs[agent] = []
+        self._workers[agent] = ModelTurnWorker(_AgentTurnSession(self.supervisor, agent, self._logs[agent]), driver)
 
     def send(self, text: str) -> Message:
         message = self.supervisor.append_user_message(self.coordinator, text)
@@ -80,6 +88,13 @@ class MultiAgentSession:
 
     def conversation_log(self):
         return self.supervisor.journal.conversation("user", self.coordinator)
+
+    def repl_log(self) -> list[dict]:
+        """Compatibility view for the console; workers gain per-role logs next."""
+        return [entry for agent in self.agents for entry in self._logs.get(agent, [])]
+
+    def model_program_log(self) -> list[dict]:
+        return [entry for entry in self.repl_log() if entry["event"] == "model_program"]
 
     def worker(self, agent: str) -> ModelTurnWorker:
         return self._workers[agent]

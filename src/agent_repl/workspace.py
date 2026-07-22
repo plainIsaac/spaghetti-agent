@@ -30,7 +30,17 @@ class Workspace:
         self._connection.execute("""CREATE TABLE IF NOT EXISTS workspace_branch_files (
             task_id INTEGER NOT NULL, path TEXT NOT NULL, text TEXT NOT NULL, base_revision TEXT NOT NULL,
             PRIMARY KEY(task_id, path))""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS static_workspace_watchers (
+            id INTEGER PRIMARY KEY, paths TEXT NOT NULL, recipient TEXT NOT NULL, message TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS static_workspace_watcher_deliveries (
+            watcher_id INTEGER NOT NULL, path TEXT NOT NULL, revision TEXT NOT NULL, delivered_at TEXT NOT NULL,
+            PRIMARY KEY(watcher_id, path, revision))""")
         self._connection.commit()
+        self._write_observer = None
+
+    def set_write_observer(self, observer) -> None:
+        self._write_observer = observer
 
     def list(self, relative: str = ".") -> list[str]:
         directory = self._resolve(relative)
@@ -119,6 +129,8 @@ class Workspace:
                 (relative, agent, task_id, revision),
             )
             self._connection.commit()
+        if self._write_observer is not None:
+            self._write_observer(relative, task_id, revision)
         return {"path": relative, "previous_revision": previous, "revision": revision}
 
     def changes(self, task_id: int) -> list[dict[str, object]]:
@@ -169,12 +181,58 @@ class Workspace:
                 current = self._revision(path.read_text(encoding="utf-8") if path.exists() else "")
                 if current != base:
                     raise RuntimeError(f"workspace merge conflict: {relative} changed since branch")
+            writes: list[tuple[str, str]] = []
             for relative, text, _base in rows:
                 path = self._resolve(str(relative)); path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(str(text), encoding="utf-8")
+                writes.append((str(relative), self._revision(str(text))))
             self._connection.execute("UPDATE workspace_branches SET state='merged' WHERE task_id=?", (task_id,))
             self._connection.commit()
+        if self._write_observer is not None:
+            for relative, revision in writes:
+                self._write_observer(relative, task_id, revision)
         return {"task_id": task_id, "state": "merged", "files": len(rows)}
+
+    def add_workspace_watcher(self, paths: list[str], recipient: str, message: str) -> dict[str, object]:
+        import json
+        if not paths or not all(isinstance(path, str) and path for path in paths):
+            raise ValueError("workspace watcher requires at least one non-empty path pattern")
+        with self._lock:
+            cursor = self._connection.execute(
+                "INSERT INTO static_workspace_watchers(paths,recipient,message,created_at) VALUES(?,?,?,?)",
+                (json.dumps(paths), recipient, message, datetime.now(UTC).isoformat()),
+            )
+            self._connection.commit()
+        return {"id": cursor.lastrowid, "type": "workspace_watcher", "recipient": recipient, "paths": paths, "message": message, "active": True}
+
+    def workspace_watchers(self, active_only: bool = True) -> list[dict[str, object]]:
+        import json
+        query = "SELECT id,paths,recipient,message,active,created_at FROM static_workspace_watchers"
+        if active_only:
+            query += " WHERE active=1"
+        query += " ORDER BY id"
+        return [
+            {"id": row[0], "type": "workspace_watcher", "paths": json.loads(row[1]), "recipient": row[2], "message": row[3], "active": bool(row[4]), "created_at": row[5]}
+            for row in self._connection.execute(query)
+        ]
+
+    def stop_workspace_watcher(self, watcher_id: int) -> bool:
+        with self._lock:
+            cursor = self._connection.execute("UPDATE static_workspace_watchers SET active=0 WHERE id=? AND active=1", (watcher_id,))
+            self._connection.commit()
+        return cursor.rowcount == 1
+
+    def record_workspace_watcher_delivery(self, watcher_id: int, path: str, revision: str) -> bool:
+        with self._lock:
+            try:
+                self._connection.execute(
+                    "INSERT INTO static_workspace_watcher_deliveries(watcher_id,path,revision,delivered_at) VALUES(?,?,?,?)",
+                    (watcher_id, path, revision, datetime.now(UTC).isoformat()),
+                )
+            except sqlite3.IntegrityError:
+                return False
+            self._connection.commit()
+        return True
 
     def close(self) -> None:
         self._connection.close()

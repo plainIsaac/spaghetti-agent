@@ -214,6 +214,12 @@ class ModelTurnWorker:
             result = self.session.run_openai_turn(
                 self.driver, on_phase=phase, default_context_window=self._default_context_window,
             )
+            # A model program can compile yet fail against real runtime state. Give it
+            # one bounded repair turn with durable supervisor feedback.
+            if result is not None and result.status == "error":
+                result = self.session.run_openai_turn(
+                    self.driver, on_phase=phase, default_context_window=self._default_context_window,
+                )
         except Exception as error:
             result = KernelResult("error", error=f"{type(error).__name__}: {error}")
         if self._on_complete is not None:

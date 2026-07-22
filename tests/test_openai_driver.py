@@ -8,7 +8,7 @@ import unittest
 from time import sleep
 
 from agent_repl import OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
-from agent_repl.session import ModelTurnWorker
+from agent_repl.session import ModelTurnWorker, _NOT_READY
 from agent_repl.openai_driver import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
@@ -29,6 +29,21 @@ class FakeResponses:
 class FakeClient:
     def __init__(self, output_text: str) -> None:
         self.responses = FakeResponses(output_text)
+
+
+class SequenceResponses:
+    def __init__(self, outputs: list[str]) -> None:
+        self.outputs = outputs
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(output_text=self.outputs[len(self.calls) - 1])
+
+
+class SequenceClient:
+    def __init__(self, outputs: list[str]) -> None:
+        self.responses = SequenceResponses(outputs)
 
 
 class StreamResponses:
@@ -303,6 +318,33 @@ class OpenAIDriverTests(unittest.TestCase):
                 self.assertEqual(session.repl_log()[1]["status"], "ok")
             finally:
                 session.close()
+
+    def test_worker_retries_one_failed_evaluation_with_error_feedback(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Handle this.")
+        client = SequenceClient([
+            "raise RuntimeError('first attempt failed')",
+            "inbox.reply_to_latest('Recovered after retry.')",
+        ])
+        worker = ModelTurnWorker(session, OpenAIAgentDriver(client=client))
+        self.addCleanup(worker.close)
+
+        self.assertTrue(worker.request_turn())
+        deadline = __import__("time").monotonic() + 2
+        result = None
+        while __import__("time").monotonic() < deadline:
+            collected = worker.collect()
+            if collected is not _NOT_READY:
+                result = collected
+                break
+            sleep(0.01)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(len(client.responses.calls), 2)
+        retry_input = json.loads(client.responses.calls[1]["input"])
+        self.assertIn("first attempt failed", retry_input["model_feedback"]["error"])
+        self.assertEqual(session.user_messages()[0].text, "Recovered after retry.")
 
     def test_task_wakeup_dispatches_a_model_turn_without_user_input(self) -> None:
         session = SingleAgentSession.open()
