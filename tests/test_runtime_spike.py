@@ -201,6 +201,43 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(builder.evaluate("task = tasks.list()[0]\ntasks.take(task)\n_result = tasks.complete(task)").value["state"], "completed")
         self.assertIn("Task 1 completed by builder", session.supervisor.journal.pending("agent")[0].text)
 
+    def test_failed_delegated_task_notifies_its_coordinator(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.supervisor.create_repl("builder")
+        builder = session.supervisor.start_agent_kernel("builder")
+        delegated = session.evaluate("_result = tasks.delegate('builder', 'Write shared file')").value
+        builder.evaluate(f"tasks.take({delegated['id']})\nraise RuntimeError('workspace conflict: shared.txt')")
+        notices = session.supervisor.journal.pending("agent")
+        self.assertIn("Task 1 failed in builder", notices[0].text)
+        self.assertIn("context.errors.for_task(1)", notices[0].text)
+
+    def test_delegated_builder_branch_is_submitted_then_explicitly_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = SingleAgentSession.open()
+            try:
+                session.supervisor.workspace.root = Path(directory)
+                session.supervisor.create_repl("builder")
+                builder = session.supervisor.start_agent_kernel("builder")
+                session.supervisor.set_agent_role("builder", "builder")
+                delegated = session.evaluate("_result = tasks.delegate('builder', 'Build isolated page', {'path': 'page.html'})").value
+
+                completed = builder.evaluate(
+                    f"tasks.take({delegated['task_id']})\n"
+                    "workspace.write_text('page.html', '<main>branch</main>')\n"
+                    f"_result = tasks.complete({delegated['task_id']})"
+                )
+                self.assertTrue(completed.value["branch_submitted"])
+                self.assertFalse((Path(directory) / "page.html").exists())
+                self.assertEqual(session.supervisor.workspace.branch_state(delegated["task_id"]), "submitted")
+                self.assertIn("workspace.diff", session.supervisor.journal.pending("agent")[0].text)
+
+                merged = session.evaluate(f"_result = workspace.merge({delegated['task_id']})")
+                self.assertEqual(merged.value["state"], "merged")
+                self.assertEqual((Path(directory) / "page.html").read_text(encoding="utf-8"), "<main>branch</main>")
+            finally:
+                session.close()
+
     def test_coordinator_can_pull_its_delegated_tasks(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

@@ -82,6 +82,23 @@ class MultiAgentSession:
     def observe(self):
         return self.supervisor.observable_state.list(self.coordinator)
 
+    def state_snapshot(self) -> dict:
+        """Compact, inspection-first operational state for the user-facing UI."""
+        statuses = self.agent_status()
+        agents = []
+        active_tasks = []
+        recent_errors = []
+        for agent in self.agents:
+            phase, elapsed = statuses.get(agent, ("idle", 0.0))
+            tasks = self.supervisor.tasks.list(agent)
+            active = [task for task in tasks if task.state != "completed"]
+            agents.append({"name": agent, "role": self.supervisor.agent_role(agent), "phase": phase, "elapsed_seconds": round(elapsed, 1), "pending_messages": len(self.supervisor.journal.pending(agent))})
+            active_tasks.extend({"id": task.id, "owner": agent, "state": task.state, "title": task.title} for task in active)
+            for task in tasks:
+                for error in self.supervisor.tasks.errors(task.id):
+                    recent_errors.append({"task_id": task.id, "owner": agent, "error": error["error"], "count": error["count"]})
+        return {"agents": agents, "active_tasks": active_tasks, "recent_errors": recent_errors[-6:], "branches": self.supervisor.workspace.branches()}
+
     def user_messages(self):
         return self.supervisor.journal.pending("user")
 

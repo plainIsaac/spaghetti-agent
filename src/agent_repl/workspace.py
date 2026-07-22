@@ -158,6 +158,13 @@ class Workspace:
             self._connection.commit()
         return {"task_id": task_id, "state": "working"}
 
+    def branch_state(self, task_id: int) -> str | None:
+        row = self._connection.execute("SELECT state FROM workspace_branches WHERE task_id=?", (task_id,)).fetchone()
+        return None if row is None else str(row[0])
+
+    def branches(self) -> list[dict[str, object]]:
+        return [{"task_id": row[0], "agent": row[1], "state": row[2], "created_at": row[3], "files": row[4]} for row in self._connection.execute("SELECT b.task_id,b.agent,b.state,b.created_at,COUNT(f.path) FROM workspace_branches b LEFT JOIN workspace_branch_files f ON f.task_id=b.task_id GROUP BY b.task_id ORDER BY b.task_id")]
+
     def diff(self, task_id: int) -> list[dict[str, str]]:
         rows = self._connection.execute("SELECT path,text FROM workspace_branch_files WHERE task_id=? ORDER BY path", (task_id,)).fetchall()
         result: list[dict[str, str]] = []

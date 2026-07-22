@@ -245,6 +245,16 @@ class Supervisor:
             task_id = self._active_tasks.get(agent)
             if task_id is not None:
                 self.tasks.report_error(agent, task_id, state.error)
+                delegator = self.tasks.delegator(task_id)
+                if delegator is not None:
+                    message = self.journal.append(
+                        recipient=delegator,
+                        sender="supervisor",
+                        text=f"Task {task_id} failed in {agent}: {state.error}. Inspect context.errors.for_task({task_id}) and coordinate a resolution.",
+                    )
+                    kernel = self._kernels.get(delegator)
+                    if kernel is not None:
+                        kernel.deliver(message)
         if state.status in {"completed", "failed", "cancelled"}:
             self.working_context.clear_lifetime(agent, "line")
 
@@ -297,17 +307,22 @@ class Supervisor:
                 raise KeyError(f"Unknown agent: {recipient}")
             task = self.tasks.announce(recipient, str(payload["title"]), payload.get("details"))
             self.tasks.set_delegator(task.id, agent)
+            self._start_implementation_branch(recipient, task.id)
             message = self.journal.append(recipient=recipient, sender="supervisor", text=self._task_assignment_message(task))
             kernel = self._kernels.get(recipient)
             if kernel is not None:
                 kernel.deliver(message)
-            return {"id": task.id, "owner": recipient, "state": task.state, "title": task.title}
+            return {"id": task.id, "task_id": task.id, "owner": recipient, "state": task.state, "title": task.title}
         if kind == "tasks.take":
             task = self.tasks.transition(agent, _task_id(payload["task_id"]), "working")
             self._active_tasks[agent] = task.id
             return {"id": task.id, "state": task.state}
         if kind == "tasks.complete":
             task = self.tasks.transition(agent, _task_id(payload["task_id"]), "completed")
+            submitted_branch = False
+            if self.workspace.branch_state(task.id) == "working":
+                self.workspace.submit(agent, task.id)
+                submitted_branch = True
             if self._active_tasks.get(agent) == task.id:
                 self._active_tasks.pop(agent, None)
             self.working_context.clear(agent, "task", str(task.id))
@@ -317,11 +332,12 @@ class Supervisor:
                     self.working_context.clear(agent, "message", str(message_id))
             delegator = self.tasks.delegator(task.id)
             if delegator is not None:
-                message = self.journal.append(recipient=delegator, sender="supervisor", text=f"Task {task.id} completed by {agent}: {task.title}")
+                branch_note = f" Branch submitted; inspect workspace.diff({task.id}) and merge explicitly with workspace.merge({task.id})." if submitted_branch else ""
+                message = self.journal.append(recipient=delegator, sender="supervisor", text=f"Task {task.id} completed by {agent}: {task.title}.{branch_note}")
                 kernel = self._kernels.get(delegator)
                 if kernel is not None:
                     kernel.deliver(message)
-            return {"id": task.id, "state": task.state}
+            return {"id": task.id, "state": task.state, "branch_submitted": submitted_branch}
         if kind == "workspace.list":
             return self.workspace.list(str(payload.get("path", ".")))
         if kind == "workspace.read_text":
@@ -438,6 +454,7 @@ class Supervisor:
                 # delegation. Models naturally use one verb for both cases.
                 task = self.tasks.announce(child, task_title, payload.get("details"))
                 self.tasks.set_delegator(task.id, agent)
+                self._start_implementation_branch(child, task.id)
                 message = self.journal.append(recipient=child, sender="supervisor", text=self._task_assignment_message(task))
                 kernel = self._kernels.get(child)
                 if kernel is not None:
@@ -446,6 +463,7 @@ class Supervisor:
             self._agent_spawner(child, str(payload["role"]))
             task = self.tasks.announce(child, task_title, payload.get("details"))
             self.tasks.set_delegator(task.id, agent)
+            self._start_implementation_branch(child, task.id)
             message = self.journal.append(recipient=child, sender="supervisor", text=self._task_assignment_message(task))
             self._kernels[child].deliver(message)
             return {"agent": child, "task_id": task.id, "role": payload["role"]}
@@ -488,10 +506,15 @@ class Supervisor:
                 if kernel is not None:
                     kernel.deliver(message)
 
-    @staticmethod
-    def _task_assignment_message(task: Any) -> str:
+    def _start_implementation_branch(self, agent: str, task_id: int) -> None:
+        if self.agent_role(agent) in {"builder", "implementer", "coder"}:
+            self.workspace.branch(agent, task_id)
+
+    def _task_assignment_message(self, task: Any) -> str:
         details = json.dumps(task.details, ensure_ascii=False, default=str)
-        return f"Task {task.id} assigned: {task.title}\nTask details: {details}"
+        delegator = self.tasks.delegator(task.id)
+        sender = f"\nDelegated by: {delegator}" if delegator is not None else ""
+        return f"Task {task.id} assigned: {task.title}\nTask details: {details}{sender}"
 
     def _workspace_task_id(self, agent: str, value: Any) -> int:
         if value is None:

@@ -255,7 +255,10 @@ class Tasks:
     def list(self) -> list[dict[str, Any]]:
         return self._call_supervisor("tasks.list", {})
 
-    def delegate(self, agent: str, title: str, details: Any = None) -> dict[str, Any]:
+    def delegate(self, agent: str | None = None, title: str = "", details: Any = None, *, agent_name: str | None = None) -> dict[str, Any]:
+        agent = agent if agent is not None else agent_name
+        if not isinstance(agent, str) or not agent:
+            raise ValueError("tasks.delegate requires agent or agent_name")
         return self._call_supervisor("tasks.delegate", {"agent": agent, "title": title, "details": details})
 
 
@@ -308,6 +311,9 @@ class ContextTasks:
 
     def delegated(self, active_only: bool = False) -> list[dict[str, Any]]:
         return self._call_supervisor("context.tasks.delegated", {"active_only": active_only})
+
+    def list(self) -> list[dict[str, Any]]:
+        return self._call_supervisor("tasks.list", {})
 
     def errors(self, task_id: int) -> list[dict[str, Any]]:
         return self._call_supervisor("context.errors.for_task", {"task_id": task_id})

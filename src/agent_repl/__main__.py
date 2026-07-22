@@ -18,6 +18,25 @@ from .multi_agent import MultiAgentSession
 
 
 def _format_state(session: SingleAgentSession) -> str:
+    if isinstance(session, MultiAgentSession):
+        snapshot = session.state_snapshot()
+        lines = ["agents:"]
+        lines.extend(
+            f"  {item['name']} ({item['role']}): {item['phase']} {item['elapsed_seconds']:.1f}s, {item['pending_messages']} pending"
+            for item in snapshot["agents"]
+        )
+        lines.append("active tasks:")
+        if snapshot["active_tasks"]:
+            lines.extend(f"  #{task['id']} {task['owner']} {task['state']}: {task['title']}" for task in snapshot["active_tasks"])
+        else:
+            lines.append("  none")
+        if snapshot["recent_errors"]:
+            lines.append("recent errors:")
+            lines.extend(f"  #{error['task_id']} {error['owner']}: {error['error']} (x{error['count']})" for error in snapshot["recent_errors"])
+        if snapshot["branches"]:
+            lines.append("branches:")
+            lines.extend(f"  task #{branch['task_id']} {branch['agent']}: {branch['state']} ({branch['files']} file(s))" for branch in snapshot["branches"])
+        return "\n".join(lines)
     values = [value for value in session.observe() if value.show_by_default]
     if not values:
         return "No observable state has been published."
