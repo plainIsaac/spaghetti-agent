@@ -372,6 +372,11 @@ class Supervisor:
                     "taken_by": task.taken_by, "taken_at": task.taken_at, "announced_at": task.announced_at}
         if kind == "context.tasks.events":
             return self.tasks.events(int(payload["task_id"]))
+        if kind == "context.tasks.delegated":
+            return [
+                {"id": task.id, "owner": task.owner, "title": task.title, "state": task.state, "details": task.details}
+                for task in self.tasks.delegated(agent, bool(payload.get("active_only", False)))
+            ]
         if kind == "context.errors.for_task":
             return self.tasks.errors(int(payload["task_id"]))
         if kind == "context.errors.search":

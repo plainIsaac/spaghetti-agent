@@ -158,6 +158,14 @@ class TaskRegistry:
             row = self._connection.execute("SELECT delegator FROM task_delegations WHERE task_id=?", (task_id,)).fetchone()
             return None if row is None else str(row[0])
 
+    def delegated(self, delegator: str, active_only: bool = False) -> list[Task]:
+        query = "SELECT t.id FROM tasks t JOIN task_delegations d ON d.task_id=t.id WHERE d.delegator=?"
+        if active_only:
+            query += " AND t.state != 'completed'"
+        query += " ORDER BY t.id"
+        with self._lock:
+            return [self._get(int(row[0])) for row in self._connection.execute(query, (delegator,)).fetchall()]  # type: ignore[list-item]
+
     def errors(self, task_id: int) -> list[dict[str, Any]]:
         return [
             {"error": row[0], "count": row[1], "trouble_task_id": row[2], "last_at": row[3]}

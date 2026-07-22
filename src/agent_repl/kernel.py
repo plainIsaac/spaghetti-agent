@@ -296,6 +296,9 @@ class ContextTasks:
     def events(self, task_id: int) -> list[dict[str, Any]]:
         return self._call_supervisor("context.tasks.events", {"task_id": task_id})
 
+    def delegated(self, active_only: bool = False) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.tasks.delegated", {"active_only": active_only})
+
     def errors(self, task_id: int) -> list[dict[str, Any]]:
         return self._call_supervisor("context.errors.for_task", {"task_id": task_id})
 

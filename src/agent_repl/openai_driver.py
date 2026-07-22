@@ -80,6 +80,9 @@ wait for an invented observable status. Never use `while`, polling, or sleeping
 to wait for a child: acknowledge or leave the current message after spawning;
 the supervisor will wake you with the completion event on a later turn. Then
 inspect the child's workspace result and complete the parent task.
+Before every spawn, call `context.tasks.delegated(active_only=True)`. On a
+retry, reuse and wait for any related active child rather than spawning a
+replacement. Use this same API to identify which completion to review.
 Specialists should publish concise results and message the coordinator, not the
 user, unless specifically granted responsibility for user communication.
 For a build or change request, first inspect the relevant inbox, recent user

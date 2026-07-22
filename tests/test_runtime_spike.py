@@ -192,6 +192,15 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(builder.evaluate("task = tasks.list()[0]\ntasks.take(task)\n_result = tasks.complete(task)").value["state"], "completed")
         self.assertIn("Task 1 completed by builder", session.supervisor.journal.pending("agent")[0].text)
 
+    def test_coordinator_can_pull_its_delegated_tasks(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.supervisor.create_repl("builder")
+        session.supervisor.start_agent_kernel("builder")
+        session.evaluate("tasks.delegate('builder', 'Build file', {'path': 'app.py'})")
+        result = session.evaluate("_result = context.tasks.delegated(active_only=True)")
+        self.assertEqual(result.value[0]["title"], "Build file")
+
     def test_agent_can_spawn_or_be_denied_a_dynamic_subagent(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)
