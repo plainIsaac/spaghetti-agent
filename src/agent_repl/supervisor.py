@@ -403,8 +403,11 @@ class Supervisor:
             child = str(payload["name"])
             if child in self._repls:
                 raise ValueError(f"Agent already exists: {child}")
+            task_title = payload["task"]
+            if not isinstance(task_title, str) or not task_title.strip():
+                raise TypeError("agents.spawn task must be a non-empty title string; it creates the child task itself")
             self._agent_spawner(child, str(payload["role"]))
-            task = self.tasks.announce(child, str(payload["task"]), payload.get("details"))
+            task = self.tasks.announce(child, task_title, payload.get("details"))
             self.tasks.set_delegator(task.id, agent)
             message = self.journal.append(recipient=child, sender="supervisor", text=f"Task {task.id} assigned: {task.title}")
             self._kernels[child].deliver(message)

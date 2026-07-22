@@ -147,19 +147,38 @@ def main() -> None:
             _render_default_presentation(session, seen_message_ids, seen_state_revisions)
             prompt = "you> "
             if worker is not None:
-                result = worker.collect()
-                if result is not _NOT_READY:
-                    if result is not None and result.status == "ok" and session.supervisor.journal.pending("agent"):
-                        worker.request_turn()
-                phase, elapsed = worker.status()
-                if phase not in {"idle", "completed"}:
-                    prompt = f"you [{phase} {elapsed:.1f}s]> "
-                    agents_were_active = True
-                elif agents_were_active:
-                    queued = len(session.supervisor.journal.pending("agent"))
-                    suffix = f"; {queued} message(s) remain queued" if queued else ""
-                    print(f"agents> idle — no model turns are running{suffix}.")
-                    agents_were_active = False
+                if multi_agent:
+                    for agent in session.agents:
+                        session.worker(agent).collect()
+                    active = [
+                        (agent, phase, elapsed)
+                        for agent, (phase, elapsed) in session.agent_status().items()
+                        if phase not in {"idle", "completed"}
+                    ]
+                    if active:
+                        prompt = "you [" + ", ".join(
+                            f"{agent}:{phase} {elapsed:.1f}s" for agent, phase, elapsed in active
+                        ) + "]> "
+                        agents_were_active = True
+                    elif agents_were_active:
+                        queued = session.pending_agent_messages()
+                        suffix = f"; {queued} message(s) remain queued" if queued else ""
+                        print(f"agents> idle — no model turns are running{suffix}.")
+                        agents_were_active = False
+                else:
+                    result = worker.collect()
+                    if result is not _NOT_READY:
+                        if result is not None and result.status == "ok" and session.supervisor.journal.pending("agent"):
+                            worker.request_turn()
+                    phase, elapsed = worker.status()
+                    if phase not in {"idle", "completed"}:
+                        prompt = f"you [{phase} {elapsed:.1f}s]> "
+                        agents_were_active = True
+                    elif agents_were_active:
+                        queued = len(session.supervisor.journal.pending("agent"))
+                        suffix = f"; {queued} message(s) remain queued" if queued else ""
+                        print(f"agents> idle — no model turns are running{suffix}.")
+                        agents_were_active = False
             line = input(prompt).strip()
             if not line:
                 continue

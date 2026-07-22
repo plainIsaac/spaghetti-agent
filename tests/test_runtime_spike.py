@@ -205,6 +205,10 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.value["agent"], "reviewer")
         self.assertIn("Task 1 assigned", session.supervisor.journal.pending("reviewer")[0].text)
 
+        malformed = session.evaluate("agents.spawn('bad', 'review', tasks.announce('wrong shape'))")
+        self.assertEqual(malformed.status, "error")
+        self.assertIn("title string", malformed.error)
+
         session.supervisor.allow_subagents = False
         denied = session.evaluate("agents.spawn('blocked', 'review', 'This must not start')")
         self.assertEqual(denied.status, "error")

@@ -214,9 +214,11 @@ class ModelTurnWorker:
             result = self.session.run_openai_turn(
                 self.driver, on_phase=phase, default_context_window=self._default_context_window,
             )
-            # A model program can compile yet fail against real runtime state. Give it
-            # one bounded repair turn with durable supervisor feedback.
-            if result is not None and result.status == "error":
+            # One provider failure and one runtime failure may occur in sequence.
+            # Keep repair bounded while allowing the latter to see durable feedback.
+            repair_attempts = 0
+            while result is not None and result.status == "error" and repair_attempts < 2:
+                repair_attempts += 1
                 result = self.session.run_openai_turn(
                     self.driver, on_phase=phase, default_context_window=self._default_context_window,
                 )

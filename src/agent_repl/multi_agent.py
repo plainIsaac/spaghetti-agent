@@ -99,6 +99,13 @@ class MultiAgentSession:
     def worker(self, agent: str) -> ModelTurnWorker:
         return self._workers[agent]
 
+    def agent_status(self) -> dict[str, tuple[str, float]]:
+        """Current worker state for all agents, including dynamically spawned ones."""
+        return {agent: worker.status() for agent, worker in self._workers.items()}
+
+    def pending_agent_messages(self) -> int:
+        return sum(len(self.supervisor.journal.pending(agent)) for agent in self.agents)
+
     def close(self) -> None:
         for worker in self._workers.values(): worker.close()
         self.supervisor.close(); self.supervisor.journal.close(); self.supervisor.observable_state.close(); self.supervisor.tasks.close(); self.supervisor.working_context.close(); self.supervisor.workspace.close()

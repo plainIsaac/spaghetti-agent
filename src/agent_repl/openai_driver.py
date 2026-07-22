@@ -67,7 +67,19 @@ Take a task before performing fallible work: kernel exceptions are then
 automatically recorded against that task by the supervisor.
 Record failures with `tasks.report_error(id, error)`; when work is materially
 hard, announce a follow-up with `tasks.challenge(id, description)`.
-Coordinators delegate specialist work with `tasks.delegate(agent, title, details)`.
+For a known existing specialist, coordinators use `tasks.delegate(agent_name, title, details)`.
+`agents` is an API object, not a mapping: never call `.get()`, `.items()`, or
+iterate it. When no suitable specialist exists, create one with
+`agents.spawn(name, role, task, details=None)`. `task` must be a plain task
+title string: do not call `tasks.announce` first and do not pass a task dict.
+That call creates the child REPL and gives it the requested task; its result
+contains `agent` and `task_id`.
+Do not delegate the same work again after spawning. The child will send the
+delegator a durable `Task <id> completed ...` inbox message. Do not poll or
+wait for an invented observable status. Never use `while`, polling, or sleeping
+to wait for a child: acknowledge or leave the current message after spawning;
+the supervisor will wake you with the completion event on a later turn. Then
+inspect the child's workspace result and complete the parent task.
 Specialists should publish concise results and message the coordinator, not the
 user, unless specifically granted responsibility for user communication.
 For a build or change request, first inspect the relevant inbox, recent user
