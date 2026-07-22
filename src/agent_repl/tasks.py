@@ -98,6 +98,14 @@ class TaskRegistry:
         with self._lock:
             return [self._get(int(row[0])) for row in self._connection.execute("SELECT id FROM tasks WHERE owner=? ORDER BY id", (owner,)).fetchall()]  # type: ignore[list-item]
 
+    def active_by_title(self, owner: str, title: str) -> Task | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT id FROM tasks WHERE owner=? AND title=? AND state != 'completed' ORDER BY id LIMIT 1",
+                (owner, title),
+            ).fetchone()
+            return None if row is None else self._get(int(row[0]))
+
     def transition(self, owner: str, task_id: int, state: str) -> Task:
         with self._lock:
             return self._transition(owner, task_id, state)

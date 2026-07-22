@@ -50,6 +50,10 @@ class Workspace:
             raise ValueError(f"not a directory: {relative}")
         return [str(path.relative_to(self.root)).replace("\\", "/") for path in sorted(directory.rglob("*")) if path.is_file()]
 
+    def exists(self, relative: str, task_id: int | None = None) -> bool:
+        self._resolve(relative)
+        return self._branch_text(task_id, relative) is not None if task_id is not None else self._resolve(relative).exists()
+
     def read_text(self, relative: str, agent: str | None = None, task_id: int | None = None) -> dict[str, str]:
         path = self._resolve(relative)
         branch = self._branch_text(task_id, relative) if task_id is not None else None

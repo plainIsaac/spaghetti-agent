@@ -33,7 +33,21 @@ def _print_model_log(session: SingleAgentSession) -> None:
 
 
 def _print_help() -> None:
-    print("Type a normal message for the agent. State is shown only when it changes; :state shows the current snapshot. :python opens inspection; :log, :model-log, :repl-log, and :http-log show debug logs.")
+    print("Type a normal message for the agent. :agents shows workers and tasks; :state, :python, :log, :model-log, :repl-log, and :http-log are debug controls.")
+
+
+def _print_agents(session) -> None:
+    if isinstance(session, MultiAgentSession):
+        statuses = session.agent_status()
+        for agent in session.agents:
+            phase, elapsed = statuses.get(agent, ("idle", 0.0))
+            pending = len(session.supervisor.journal.pending(agent))
+            tasks = [task for task in session.supervisor.tasks.list(agent) if task.state != "completed"]
+            task_text = ", ".join(f"#{task.id} {task.state}: {task.title}" for task in tasks) or "no active tasks"
+            print(f"{agent}: {phase} ({elapsed:.1f}s), {pending} pending — {task_text}")
+    else:
+        pending = len(session.supervisor.journal.pending(session.agent))
+        print(f"{session.agent}: {pending} pending message(s)")
 
 
 def _print_repl_log(session: SingleAgentSession) -> None:
@@ -195,6 +209,9 @@ def main() -> None:
                 continue
             if line == ":state":
                 print(_format_state(session))
+                continue
+            if line == ":agents":
+                _print_agents(session)
                 continue
             if line == ":log":
                 for message in session.conversation_log():

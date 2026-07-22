@@ -31,6 +31,9 @@ Your entire output must compile under Python exec. Never return placeholders,
 signatures, ellipses, prose, or an empty program.
 Never return safety classifications or policy commentary; your output is always
 executable Python source, even when a request is innocuous or needs no action.
+For regular expressions, use raw string literals (for example `r"\\s+"`) or
+double every backslash. Never emit an invalid escape such as `"\\s"` in a
+normal Python string literal.
 The activation identifies why you were invoked. Durable inbox entries, task
 history, errors, observations, and prior messages are pulled through Python:
 use `inbox.pending()` and `context`, not assumed prompt snapshots.
@@ -60,6 +63,9 @@ assignment, `.pop()`, or `.get()` on inbox messages. Inbox messages support both
 `message["id"]` and `message["message_id"]` as aliases.
 If `model_feedback` is present, your previous program was rejected. Correct the
 specific error and return one replacement Python program; do not discuss it.
+`model_feedback.failed_program` is the exact Python source that failed. Inspect
+that source and the reported exception; preserve valid work and make the
+smallest correction instead of reconstructing the program from memory.
 For a concise response to the latest message, prefer inbox.reply_to_latest(text):
 it queues the user reply and acknowledges that message in one runtime operation.
 Use explicit inbox.ack(message_id) only when you intentionally do not reply.
@@ -76,6 +82,8 @@ capabilities. Do not explain the code outside the Python source.
 Use `tasks.announce(title)`, `tasks.take(task_or_id)`, `tasks.complete(task_or_id)`, and
 `tasks.wait_for(id, observable_name, expected_value)` to express durable work;
 do not use a long-running polling loop to wait for observable state.
+Before announcing work, inspect `tasks.list()`. If a matching task is already
+active, take or continue that task—never create a duplicate task after a retry.
 Take a task before performing fallible work: kernel exceptions are then
 automatically recorded against that task by the supervisor.
 Record failures with `tasks.report_error(id, error)`; when work is materially
@@ -102,6 +110,12 @@ wait for child messages before writing any resolution yourself. Do not preempt
 the child work by writing the contested file in the coordinator's first turn.
 Specialists should publish concise results and message the coordinator, not the
 user, unless specifically granted responsibility for user communication.
+If your role is coordinator and `available_agents` lists suitable specialists,
+delegate substantial project work before directly editing shared files: send
+research/discovery to a researcher and implementation to a builder where
+available. Create/take the coordination task, send precise task details, then
+wait for durable child completion messages; do not solve every independent
+workstream yourself.
 For a build or change request, first inspect the relevant inbox, recent user
 context, active tasks, and existing workspace before writing files. Record the
 work in a task, verify changed files after writing them, publish concise
@@ -117,6 +131,9 @@ use `workspace.read_text(path)["text"]` when verifying or editing file text.
 These managed writes are task-scoped and conflict-aware;
 ordinary Python filesystem I/O is unmanaged and must not be used for shared
 multi-agent files.
+Use `workspace.exists(path)` when existence is needed. Before overwriting an
+existing file, call `workspace.read_text(path)` in the same active task; the
+returned revision authorizes the later managed write.
 
 A valid minimal program looks like:
 message = inbox.pending()[-1]
@@ -124,6 +141,13 @@ task = tasks.announce("Respond to latest inbox message")
 tasks.take(task)
 inbox.reply_to_latest(f"Received: {message['text']}")
 tasks.complete(task)"""
+
+_ROLE_POLICIES = {
+    "coordinator": """\nRole policy: You coordinate rather than independently implementing every workstream. For substantial work, delegate suitable research and implementation to available agents, track delegated tasks, and integrate/review their results. Only modify a shared file yourself when coordinating a resolution or when no suitable specialist exists.""",
+    "researcher": """\nRole policy: You investigate requirements, constraints, and relevant project context. Pull user/task context first, publish concise findings, and message the coordinator with actionable conclusions. Do not edit shared implementation files unless your assigned task explicitly requires it.""",
+    "builder": """\nRole policy: You implement the assigned change using managed workspace APIs. Read existing files before overwriting, verify your result, then complete your task and report the changed paths and verification to the coordinator.""",
+    "reviewer": """\nRole policy: You inspect assigned changes, workspace state, and task context. Report specific defects or approval to the coordinator; do not silently replace another agent's implementation.""",
+}
 
 _LEGACY_HARNESS_COMMANDS = {":state", ":help", ":log", ":model-log", ":python", ":restart", ":quit"}
 
@@ -185,6 +209,7 @@ class OpenAICompatibleAgentDriver:
         activation: list[dict[str, Any]],
         model_feedback: dict[str, Any] | None,
         on_delta: Callable[[str], None] | None = None,
+        role: str = "agent",
     ) -> PlannedTurn:
         request = {
             "activation": activation,
@@ -236,7 +261,7 @@ class OpenAICompatibleAgentDriver:
         try:
             response = client.responses.create(
                 model=self.model,
-                instructions=_INSTRUCTIONS,
+                instructions=_INSTRUCTIONS + _ROLE_POLICIES.get(role, "\nRole policy: Complete only your assigned task and communicate durable results."),
                 input=json.dumps(request),
                 stream=True,
             )
@@ -432,6 +457,9 @@ class OpenAIAgentController:
             delegated_tasks = self._delegated_task_summary()
             if delegated_tasks:
                 activation[0]["delegated_tasks"] = delegated_tasks
+            available_agents = self.supervisor.agent_roles(exclude=self.agent)
+            if available_agents:
+                activation[0]["available_agents"] = available_agents
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
         model_feedback = feedback_value.value if feedback_value is not None and feedback_value.value.get("active") else None
         scopes = [("session", "")]
@@ -449,20 +477,25 @@ class OpenAIAgentController:
         try:
             if on_phase is not None:
                 on_phase("planning")
-            planned = self.driver.plan(activation, model_feedback, on_delta)
+            activation[0]["agent_role"] = self.supervisor.agent_role(self.agent)
+            planned = self.driver.plan(activation, model_feedback, on_delta, role=self.supervisor.agent_role(self.agent))
             if on_program is not None:
                 on_program(planned)
             self._validate_program(planned.source)
         except OpenAIConfigurationError:
             raise
         except Exception as error:
+            instruction = "Your previous output was rejected. Return one valid Python program only."
+            if isinstance(error, SyntaxError) and "escape" in str(error).lower():
+                instruction = "Your program has an invalid escape sequence. Use a raw regex string such as r'\\s+' or double each backslash, then return corrected Python only."
             feedback: dict[str, Any] = {
                 "active": True,
                 "error": f"{type(error).__name__}: {error}",
-                "instruction": "Your previous output was rejected. Return one valid Python program only.",
+                "instruction": instruction,
             }
             if planned is not None:
                 feedback["rejected_output"] = planned.raw_output
+                feedback["failed_program"] = planned.source
             self.supervisor.publish_state(
                 self.agent,
                 "model_error",
@@ -489,14 +522,23 @@ class OpenAIAgentController:
                 show_by_default=False,
             )
         else:
+            error_text = result.error or "model program evaluation failed"
+            repair_instruction = "Your program ran but failed. Inspect the error, preserve completed work, and return one corrected Python program."
+            if "workspace write requires reading existing file first" in error_text:
+                repair_instruction = "The target file already exists. Reuse the active task, call workspace.read_text(path), then call workspace.write_text(path, text); do not create another task."
+            elif "has no attribute 'exists'" in error_text:
+                repair_instruction = "Use workspace.exists(path) for an existence check, then correct the failed program without creating duplicate tasks."
+            elif "is claimed by" in error_text:
+                repair_instruction = "This is your existing active task's workspace claim. Continue that task and do not announce a duplicate task or claim."
             self.supervisor.publish_state(
                 self.agent,
                 "model_error",
                 {
                     "active": True,
-                    "error": result.error or "model program evaluation failed",
-                    "instruction": "Your program ran but failed. Inspect the error, preserve completed work, and return one corrected Python program.",
+                    "error": error_text,
+                    "instruction": repair_instruction,
                     "rejected_output": planned.raw_output,
+                    "failed_program": planned.source,
                 },
                 presenter="error",
                 label="Model evaluation error",

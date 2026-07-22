@@ -271,6 +271,9 @@ class Workspace:
     def read_text(self, path: str) -> dict[str, str]:
         return self._call_supervisor("workspace.read_text", {"path": path})
 
+    def exists(self, path: str) -> bool:
+        return bool(self._call_supervisor("workspace.exists", {"path": path}))
+
     def claim(self, path: str, task_id: Any = None) -> dict[str, Any]:
         return self._call_supervisor("workspace.claim", {"task_id": task_id, "path": path})
 

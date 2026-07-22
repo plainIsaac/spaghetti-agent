@@ -38,6 +38,7 @@ class MultiAgentSession:
         for agent in self.agents:
             self.supervisor.create_repl(agent)
             self.supervisor.start_agent_kernel(agent)
+            self.supervisor.set_agent_role(agent, "coordinator" if agent == coordinator else agent)
         self.supervisor.start_user_kernel(agent=coordinator)
         self._workers: dict[str, ModelTurnWorker] = {}
         self._logs: dict[str, list[dict]] = {agent: [] for agent in self.agents}
@@ -63,6 +64,7 @@ class MultiAgentSession:
         driver = type(parent_driver)(parent_driver.model, request_timeout=parent_driver.request_timeout)
         self.agents.append(agent)
         self.supervisor.create_repl(agent); self.supervisor.start_agent_kernel(agent)
+        self.supervisor.set_agent_role(agent, role)
         self._drivers[agent] = driver
         self._logs[agent] = []
         self._workers[agent] = ModelTurnWorker(_AgentTurnSession(self.supervisor, agent, self._logs[agent]), driver)

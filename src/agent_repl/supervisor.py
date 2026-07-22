@@ -95,6 +95,7 @@ class Supervisor:
         self._kernels: dict[str, PersistentKernel] = {}
         self._active_tasks: dict[str, int] = {}
         self._agent_spawner: Callable[[str, str], None] | None = None
+        self._agent_roles: dict[str, str] = {}
         self._user_agent = "agent"
         self.allow_subagents = True
         self._turn_messages: dict[str, list[int]] = {}
@@ -155,6 +156,15 @@ class Supervisor:
 
     def set_agent_spawner(self, spawner: Callable[[str, str], None] | None, allow_subagents: bool = True) -> None:
         self._agent_spawner, self.allow_subagents = spawner, allow_subagents
+
+    def set_agent_role(self, agent: str, role: str) -> None:
+        self._agent_roles[agent] = role
+
+    def agent_roles(self, exclude: str | None = None) -> list[dict[str, str]]:
+        return [{"name": name, "role": role} for name, role in sorted(self._agent_roles.items()) if name != exclude]
+
+    def agent_role(self, agent: str) -> str:
+        return self._agent_roles.get(agent, "agent")
 
     def start_user_kernel(self, user: str = "user", agent: str = "agent") -> PersistentKernel:
         """Start the user's persistent Python REPL with explicit read/write capabilities."""
@@ -274,9 +284,13 @@ class Supervisor:
                 self.working_context.clear(agent, "message", str(message_id))
             return acknowledged
         if kind == "tasks.announce":
-            task = self.tasks.announce(agent, str(payload["title"]), payload.get("details"))
+            title = str(payload["title"])
+            task = self.tasks.active_by_title(agent, title)
+            reused = task is not None
+            if task is None:
+                task = self.tasks.announce(agent, title, payload.get("details"))
             self.tasks.bind_messages(task.id, self._turn_messages.get(agent, []))
-            return {"id": task.id, "state": task.state, "title": task.title}
+            return {"id": task.id, "state": task.state, "title": task.title, "reused": reused}
         if kind == "tasks.delegate":
             recipient = str(payload["agent"])
             if recipient not in self._repls:
@@ -313,6 +327,8 @@ class Supervisor:
         if kind == "workspace.read_text":
             task_id = self._active_tasks.get(agent)
             return self.workspace.read_text(str(payload["path"]), agent, task_id)
+        if kind == "workspace.exists":
+            return self.workspace.exists(str(payload["path"]), self._active_tasks.get(agent))
         if kind == "workspace.claim":
             task_id = self._workspace_task_id(agent, payload.get("task_id"))
             task = self.tasks.get(task_id)
@@ -418,7 +434,15 @@ class Supervisor:
                 existing = self.tasks.delegated_task(agent, child, task_title)
                 if existing is not None:
                     return {"agent": child, "task_id": existing.id, "role": payload["role"], "reused": True}
-                raise ValueError(f"Agent already exists: {child}")
+                # Treat spawning a known, running specialist as ergonomic task
+                # delegation. Models naturally use one verb for both cases.
+                task = self.tasks.announce(child, task_title, payload.get("details"))
+                self.tasks.set_delegator(task.id, agent)
+                message = self.journal.append(recipient=child, sender="supervisor", text=self._task_assignment_message(task))
+                kernel = self._kernels.get(child)
+                if kernel is not None:
+                    kernel.deliver(message)
+                return {"agent": child, "task_id": task.id, "role": payload["role"], "existing": True}
             self._agent_spawner(child, str(payload["role"]))
             task = self.tasks.announce(child, task_title, payload.get("details"))
             self.tasks.set_delegator(task.id, agent)
