@@ -9,9 +9,94 @@ import unittest
 
 from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, SingleAgentSession, Supervisor
 from agent_repl.workspace import Workspace
+from agent_repl.ui import project_index, project_view
+from agent_repl.web_ui import LocalProjectManagerUI, LocalProjectUI, make_handler, make_project_manager_handler
+from agent_repl.projects import ProjectManager
 
 
 class RuntimeSpikeTests(unittest.TestCase):
+    def test_project_manager_isolates_durable_project_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ProjectManager(directory)
+            try:
+                first = manager.create("Writing tool")
+                second = manager.create("Research tool")
+                self.assertEqual([project.name for project in manager.registry.list()], ["Writing tool", "Research tool"])
+                self.assertEqual(json.loads((Path(directory) / f"project-{first.id}" / "project.json").read_text())["format_version"], 1)
+                session = manager.open(first.id)
+                try:
+                    self.assertTrue((Path(directory) / f"project-{first.id}" / "workspace").exists())
+                    self.assertTrue(manager.is_open(first.id))
+                    self.assertFalse((Path(directory) / f"project-{second.id}" / "workspace").exists())
+                finally:
+                    self.assertTrue(manager.close_project(first.id))
+                index = project_index(manager)
+                self.assertTrue(index["projects"][0]["runtime_initialized"])
+                self.assertEqual(index["projects"][1]["workspace_path"], None)
+                self.assertEqual(manager.registry.archive(second.id).state, "archived")
+            finally:
+                manager.close()
+
+    def test_project_manager_configures_each_opened_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            configured: list[str] = []
+            manager = ProjectManager(directory, configure_session=lambda session: configured.append(session.coordinator))
+            try:
+                project = manager.create("Configured")
+                session = manager.open(project.id)
+                try:
+                    self.assertEqual(configured, ["coordinator"])
+                finally:
+                    session.close()
+            finally:
+                manager.close()
+
+    def test_project_manager_web_handler_can_be_created(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ProjectManager(directory)
+            try:
+                self.assertTrue(issubclass(make_project_manager_handler(manager), object))
+            finally:
+                manager.close()
+
+    def test_local_project_manager_ui_starts_and_shuts_down_cleanly(self) -> None:
+        from urllib.request import Request, urlopen
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ProjectManager(directory)
+            ui = LocalProjectManagerUI(manager).start()
+            try:
+                self.assertIn("Projects", urlopen(ui.url, timeout=2).read().decode())
+                request = Request(ui.url + "/api/projects", data=b'{"name":"HTTP project"}', headers={"content-type": "application/json"}, method="POST")
+                self.assertEqual(json.loads(urlopen(request, timeout=2).read())["name"], "HTTP project")
+                project = manager.create("Open me")
+                self.assertTrue(ui.open_project(project.id).startswith("http://127.0.0.1:"))
+                self.assertTrue(ui.close_project(project.id))
+                self.assertFalse(ui.close_project(project.id))
+            finally:
+                ui.shutdown(); manager.close()
+    def test_project_view_keeps_default_surface_quiet_and_state_inspectable(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Hello")
+        session.evaluate("observable.publish('progress', {'phase': 'working'})")
+        view = project_view(session)
+        self.assertEqual(view["default"]["state"]["progress"]["value"]["phase"], "working")
+        self.assertEqual(view["inspection"]["conversation"][0]["text"], "Hello")
+
+    def test_web_ui_handler_can_be_created_for_a_project_session(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        self.assertTrue(issubclass(make_handler(session), object))
+
+    def test_local_web_ui_starts_and_shuts_down_cleanly(self) -> None:
+        from urllib.request import urlopen
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        ui = LocalProjectUI(session).start()
+        try:
+            self.assertIn("Agent REPL", urlopen(ui.url, timeout=2).read().decode())
+        finally:
+            ui.shutdown()
     def test_managed_workspace_claims_writes_and_rejects_stale_revisions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)
@@ -135,6 +220,14 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.value, ("Investigate parser", 1, "ready"))
 
+    def test_context_error_alias_and_dictionary_observable_publish(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.evaluate("task = tasks.announce('Fail')\ntasks.take(task)\ntasks.report_error(task, 'boom')")
+        result = session.evaluate("observable.publish({'one': 1, 'two': 2})\n_result = context.errors.for_task(1)[0]['error']")
+        self.assertEqual(result.value, "boom")
+        self.assertEqual(session.supervisor.observable_state.get("agent", "two").value, 2)
+
     def test_subagent_can_pull_shared_user_context(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)
@@ -231,6 +324,7 @@ class RuntimeSpikeTests(unittest.TestCase):
                 self.assertFalse((Path(directory) / "page.html").exists())
                 self.assertEqual(session.supervisor.workspace.branch_state(delegated["task_id"]), "submitted")
                 self.assertIn("workspace.diff", session.supervisor.journal.pending("agent")[0].text)
+                self.assertIn("<main>branch</main>", project_view(session)["inspection"]["branches"][0]["diff"])
 
                 merged = session.evaluate(f"_result = workspace.merge({delegated['task_id']})")
                 self.assertEqual(merged.value["state"], "merged")
@@ -537,6 +631,13 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(restored.value[0], None)
         self.assertEqual(restored.value[1], [{"id": 1, "sender": "user", "text": "Continue after restart."}])
         self.assertEqual(registry.get("agent", "progress").value, {"phase": "running"})
+
+    def test_agent_shutdown_hook_can_publish_final_state(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.evaluate("runtime.on_shutdown(lambda: observable.publish('final_status', {'state': 'stopped'}))")
+        session.supervisor.agent_kernel("agent").stop()
+        self.assertEqual(session.supervisor.observable_state.get("agent", "final_status").value, {"state": "stopped"})
 
     def test_single_agent_session_exercises_the_user_visible_flow(self) -> None:
         session = SingleAgentSession.open()

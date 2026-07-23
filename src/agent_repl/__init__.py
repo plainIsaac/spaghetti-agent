@@ -9,11 +9,17 @@ from .openai_driver import (
     OpenAIAgentDriver,
     OpenAICompatibleAgentDriver,
     OpenAIConfigurationError,
+    GroqAgentDriver,
+    GeminiAgentDriver,
     OpenRouterAgentDriver,
 )
 from .session import SingleAgentSession
 from .multi_agent import MultiAgentSession
+from .ui import project_index, project_view
+from .web_ui import LocalProjectManagerUI, LocalProjectUI, make_project_manager_handler, serve as serve_web_ui
+from .projects import Project, ProjectManager, ProjectRegistry
 from .supervisor import RestartReport, Supervisor
+from .token_budget import TokenBudget, TokenBudgetExceeded
 
 __all__ = [
     "InboxJournal",
@@ -27,10 +33,23 @@ __all__ = [
     "OpenAIAgentDriver",
     "OpenAICompatibleAgentDriver",
     "OpenAIConfigurationError",
+    "GroqAgentDriver",
+    "GeminiAgentDriver",
     "OpenRouterAgentDriver",
     "PersistentKernel",
     "RestartReport",
     "SingleAgentSession",
     "MultiAgentSession",
+    "project_view",
+    "project_index",
+    "serve_web_ui",
+    "LocalProjectUI",
+    "make_project_manager_handler",
+    "LocalProjectManagerUI",
+    "Project",
+    "ProjectManager",
+    "ProjectRegistry",
     "Supervisor",
+    "TokenBudget",
+    "TokenBudgetExceeded",
 ]

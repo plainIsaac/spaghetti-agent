@@ -9,12 +9,19 @@ import sys
 from .openai_driver import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
+    DEFAULT_GROQ_MODEL,
+    DEFAULT_GEMINI_MODEL,
+    GroqAgentDriver,
+    GeminiAgentDriver,
     OpenAIAgentDriver,
     OpenAIConfigurationError,
     OpenRouterAgentDriver,
 )
 from .session import ModelTurnWorker, SingleAgentSession, _NOT_READY
 from .multi_agent import MultiAgentSession
+from .web_ui import LocalProjectUI
+from .web_ui import LocalProjectManagerUI
+from .projects import ProjectManager
 
 
 def _format_state(session: SingleAgentSession) -> str:
@@ -131,10 +138,16 @@ def main() -> None:
     turn_mode.add_argument("--demo", action="store_true", help="Run a deterministic demo agent turn after each normal message")
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
+    turn_mode.add_argument("--groq", action="store_true", help="Run a Groq Responses API turn (free-tier testing when available)")
+    turn_mode.add_argument("--gemini", action="store_true", help="Run a Gemini compatibility API turn (free-tier testing when available)")
     agent_mode = parser.add_mutually_exclusive_group()
     agent_mode.add_argument("--multi-agent", dest="multi_agent", action="store_true", default=True, help="Run the coordinator runtime (default)")
     agent_mode.add_argument("--single-agent", dest="multi_agent", action="store_false", help="Use the legacy one-agent runtime")
     parser.add_argument("--no-subagents", action="store_true", help="Disable dynamic subagent creation")
+    parser.add_argument("--web", action="store_true", help="Serve the local browser UI instead of the terminal UI")
+    parser.add_argument("--project-manager", action="store_true", help="Serve the multi-project manager UI")
+    parser.add_argument("--projects-dir", type=Path, default=Path(".agent-repl-projects"), help="Directory for durable multi-project state")
+    parser.add_argument("--web-port", type=int, default=8765, help="Local browser UI port")
     parser.add_argument("--model", help="Provider model override")
     parser.add_argument(
         "--default-context-window",
@@ -143,19 +156,53 @@ def main() -> None:
         help="Include bounded recent conversation, pending work, and active tasks in model activation",
     )
     parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider first-token and stream-idle timeout in seconds")
+    parser.add_argument("--token-budget", type=int, help="Hard estimated token limit for this session or each project")
+    parser.add_argument("--turn-token-reserve", type=int, default=1024, help="Estimated completion tokens reserved before each model turn")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
     multi_agent = arguments.multi_agent and not arguments.demo
-    session = MultiAgentSession.open(str(arguments.data_dir), specialists=[]) if multi_agent else SingleAgentSession.open(
-        str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
-    )
     model_driver = None
     if arguments.openai:
         model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
+    if arguments.groq:
+        model_driver = GroqAgentDriver(arguments.model or DEFAULT_GROQ_MODEL, request_timeout=arguments.request_timeout)
+    if arguments.gemini:
+        model_driver = GeminiAgentDriver(arguments.model or DEFAULT_GEMINI_MODEL, request_timeout=arguments.request_timeout)
+    if arguments.turn_token_reserve < 0:
+        parser.error("--turn-token-reserve must be non-negative")
+    if arguments.token_budget is not None and arguments.token_budget < 1:
+        parser.error("--token-budget must be positive")
+    if model_driver is not None:
+        model_driver.output_token_reserve = arguments.turn_token_reserve
     if model_driver is not None:
         model_driver.set_http_log_path(str(arguments.data_dir / "provider-http.jsonl"))
+    if arguments.project_manager:
+        if model_driver is None:
+            parser.error("--project-manager requires a model provider (--openai, --openrouter, --groq, or --gemini)")
+        driver_type = type(model_driver)
+        def configure_project(session: MultiAgentSession) -> None:
+            session.supervisor.token_budget.set_limit(arguments.token_budget)
+            drivers = {agent: driver_type(model_driver.model, request_timeout=arguments.request_timeout) for agent in session.agents}
+            for driver in drivers.values():
+                driver.output_token_reserve = arguments.turn_token_reserve
+            session.start_workers(drivers, arguments.default_context_window)
+            session.supervisor.allow_subagents = not arguments.no_subagents
+        manager = ProjectManager(arguments.projects_dir, configure_session=configure_project)
+        ui = LocalProjectManagerUI(manager, port=arguments.web_port)
+        print(f"Agent REPL project manager: {ui.url}")
+        try:
+            ui.server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            ui.server.server_close(); manager.close()
+        return
+    session = MultiAgentSession.open(str(arguments.data_dir), specialists=[]) if multi_agent else SingleAgentSession.open(
+        str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
+    )
+    session.supervisor.token_budget.set_limit(arguments.token_budget)
     print("Agent REPL. Send a message; the agent may continue independently. Use :help for controls.")
     seen_message_ids: set[int] = set()
     seen_state_revisions: dict[str, int] = {}
@@ -170,6 +217,8 @@ def main() -> None:
     if multi_agent and model_driver is not None:
         driver_type = type(model_driver)
         drivers = {agent: driver_type(model_driver.model, request_timeout=arguments.request_timeout) for agent in session.agents}
+        for driver in drivers.values():
+            driver.output_token_reserve = arguments.turn_token_reserve
         for agent, driver in drivers.items():
             driver.set_http_log_path(str(arguments.data_dir / f"provider-http-{agent}.jsonl"))
         session.start_workers(drivers, arguments.default_context_window)
@@ -177,6 +226,19 @@ def main() -> None:
         worker = session.worker(session.coordinator)
     else:
         worker = ModelTurnWorker(session, model_driver, render_completion, default_context_window=arguments.default_context_window) if model_driver is not None else None
+    if arguments.web:
+        ui = LocalProjectUI(session, port=arguments.web_port)
+        print(f"Agent REPL web UI: {ui.url}")
+        try:
+            ui.server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            ui.server.server_close()
+            if worker is not None:
+                worker.close()
+            session.close()
+        return
     agents_were_active = False
     try:
         while True:

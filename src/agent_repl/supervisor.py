@@ -17,6 +17,7 @@ from .observable_state import ObservableStateRegistry, ObservableValue
 from .tasks import TaskRegistry
 from .working_context import WorkingContext
 from .workspace import Workspace
+from .token_budget import TokenBudget
 from .static_agents import WorkspaceWatcher
 
 
@@ -75,7 +76,7 @@ class ReplQueue:
 class Supervisor:
     """Coordinates explicit inbox sharing and schedules opt-in delivery."""
 
-    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None, working_context: WorkingContext | None = None, workspace: Workspace | None = None) -> None:
+    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None, working_context: WorkingContext | None = None, workspace: Workspace | None = None, token_budget: TokenBudget | None = None) -> None:
         self.journal = journal
         self._owns_observable_state = observable_state is None
         self.observable_state = observable_state or ObservableStateRegistry()
@@ -85,6 +86,8 @@ class Supervisor:
         self.working_context = working_context or WorkingContext()
         self._owns_workspace = workspace is None
         self.workspace = workspace or Workspace(".")
+        self.token_budget = token_budget or TokenBudget()
+        self._owns_token_budget = token_budget is None
         self._static_watchers: list[WorkspaceWatcher] = [
             WorkspaceWatcher(int(row["id"]), tuple(row["paths"]), str(row["recipient"]), str(row["message"]))
             for row in self.workspace.workspace_watchers()
@@ -478,6 +481,9 @@ class Supervisor:
                 label="Inbox handler error",
                 priority=100,
             )
+            return None
+        if kind == "runtime.shutdown_error":
+            self.publish_state(agent, "shutdown_error", {"error": str(payload["error"])}, presenter="error", label="Shutdown hook error", priority=100)
             return None
         if kind == "observable.publish":
             value = self.publish_state(

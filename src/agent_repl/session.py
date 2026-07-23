@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 import json
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, Timer
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING, Callable
 
@@ -16,6 +16,7 @@ from .supervisor import RestartReport, Supervisor
 from .tasks import TaskRegistry
 from .working_context import WorkingContext
 from .workspace import Workspace
+from .token_budget import TokenBudget
 
 if TYPE_CHECKING:
     from .openai_driver import OpenAICompatibleAgentDriver, PlannedTurn
@@ -61,7 +62,8 @@ class SingleAgentSession:
         task_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("tasks.sqlite"))
         context_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("working-context.sqlite"))
         workspace_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("workspace.sqlite"))
-        return cls(Supervisor(journal, observable_state, TaskRegistry(task_path), WorkingContext(context_path), Workspace(Path.cwd(), workspace_path)), agent, model_log_path)
+        budget_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("token-budget.sqlite"))
+        return cls(Supervisor(journal, observable_state, TaskRegistry(task_path), WorkingContext(context_path), Workspace(Path.cwd(), workspace_path), TokenBudget(budget_path)), agent, model_log_path)
 
     def send(self, text: str) -> Message:
         """Queue ordinary user text without executing it as agent source code."""
@@ -160,6 +162,7 @@ class SingleAgentSession:
         self.supervisor.tasks.close()
         self.supervisor.working_context.close()
         self.supervisor.workspace.close()
+        self.supervisor.token_budget.close()
 
 
 class ModelTurnWorker:
@@ -214,14 +217,22 @@ class ModelTurnWorker:
             result = self.session.run_openai_turn(
                 self.driver, on_phase=phase, default_context_window=self._default_context_window,
             )
-            # One provider failure and one runtime failure may occur in sequence.
-            # Keep repair bounded while allowing the latter to see durable feedback.
-            repair_attempts = 0
-            while result is not None and result.status == "error" and repair_attempts < 2:
-                repair_attempts += 1
-                result = self.session.run_openai_turn(
-                    self.driver, on_phase=phase, default_context_window=self._default_context_window,
-                )
+            provider = self.session.supervisor.observable_state.get(self.session.agent, "provider")
+            if result is not None and result.status == "error" and provider is not None and provider.value.get("status") == "rate_limited":
+                delay = float(provider.value.get("retry_after_seconds", 30.0))
+                phase("waiting_for_provider")
+                timer = Timer(delay, self.request_turn)
+                timer.daemon = True
+                timer.start()
+            else:
+                # One provider failure and one runtime failure may occur in sequence.
+                # Keep repair bounded while allowing the latter to see durable feedback.
+                repair_attempts = 0
+                while result is not None and result.status == "error" and repair_attempts < 2:
+                    repair_attempts += 1
+                    result = self.session.run_openai_turn(
+                        self.driver, on_phase=phase, default_context_window=self._default_context_window,
+                    )
         except Exception as error:
             result = KernelResult("error", error=f"{type(error).__name__}: {error}")
         if self._on_complete is not None:

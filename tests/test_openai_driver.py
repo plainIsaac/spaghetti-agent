@@ -7,7 +7,8 @@ import json
 import unittest
 from time import sleep
 
-from agent_repl import OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
+from agent_repl import GeminiAgentDriver, OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
+from agent_repl.token_budget import TokenBudget, TokenBudgetExceeded
 from agent_repl.session import ModelTurnWorker, _NOT_READY
 from agent_repl.openai_driver import (
     DEFAULT_OPENAI_MODEL,
@@ -29,6 +30,15 @@ class FakeResponses:
 class FakeClient:
     def __init__(self, output_text: str) -> None:
         self.responses = FakeResponses(output_text)
+
+
+class FakeChatClient:
+    def __init__(self, output_text: str) -> None:
+        self.calls: list[dict] = []
+        def create(**kwargs):
+            self.calls.append(kwargs)
+            return iter([SimpleNamespace(model="gemini-test", choices=[SimpleNamespace(delta=SimpleNamespace(content=output_text))])])
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
 
 
 class SequenceResponses:
@@ -104,6 +114,14 @@ class OpenAIDriverTests(unittest.TestCase):
         planned = OpenAIAgentDriver(model="test-model", client=FakeClient("_result = None")).plan([], {})
 
         self.assertEqual(planned.resolved_model, "test-model")
+
+    def test_gemini_uses_chat_completions_transport(self) -> None:
+        client = FakeChatClient("inbox.ack(inbox.pending()[0]['id'])")
+        planned = GeminiAgentDriver(model="gemini-test", client=client).plan([], None)
+
+        self.assertEqual(planned.resolved_model, "gemini-test")
+        self.assertEqual(client.calls[0]["model"], "gemini-test")
+        self.assertTrue(client.calls[0]["stream"])
 
     def test_http_trace_records_stream_open_and_close_times(self) -> None:
         with TemporaryDirectory() as directory:
@@ -221,6 +239,35 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertIn("empty agent program", result.error)
         self.assertIn("model_error", {value.name for value in session.observe()})
         self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Please handle this later.")
+
+    def test_token_budget_blocks_provider_call_before_planning(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.supervisor.token_budget.set_limit(10)
+        session.send("Please handle this later.")
+        client = FakeClient("inbox.ack(inbox.pending()[0]['id'])")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(client=client))
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("token budget exhausted", result.error)
+        self.assertEqual(client.responses.calls, [])
+        budget = session.supervisor.token_budget.snapshot()
+        self.assertEqual(budget["status"], "available")
+        self.assertEqual(budget["used_tokens"], 0)
+
+
+class TokenBudgetTests(unittest.TestCase):
+    def test_reservations_prevent_parallel_overspend_and_settle_to_actual_usage(self) -> None:
+        budget = TokenBudget(limit_tokens=100)
+        self.addCleanup(budget.close)
+        reservation = budget.reserve(20, 70)
+        with self.assertRaises(TokenBudgetExceeded):
+            budget.reserve(20, 10)
+        budget.settle(reservation, 35)
+
+        self.assertEqual(budget.snapshot()["used_tokens"], 35)
+        self.assertEqual(budget.snapshot()["remaining_tokens"], 65)
 
     def test_non_python_model_output_is_rejected_before_kernel_evaluation(self) -> None:
         session = SingleAgentSession.open()

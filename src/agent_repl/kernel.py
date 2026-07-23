@@ -190,13 +190,19 @@ class Observable:
 
     def publish(
         self,
-        name: str,
-        value: Any,
+        name: str | dict[str, Any],
+        value: Any = None,
         presenter: str = "json",
         show_by_default: bool = True,
         label: str | None = None,
         priority: int = 0,
     ) -> dict[str, Any]:
+        if isinstance(name, dict):
+            if value is not None:
+                raise ValueError("observable.publish accepts either (name, value) or one dictionary of names to values")
+            return {key: self.publish(key, item, presenter, show_by_default, label, priority) for key, item in name.items()}
+        if value is None:
+            raise ValueError("observable.publish requires a value; use observable.publish(name, value)")
         return self._call_supervisor(
             "observable.publish",
             {
@@ -208,6 +214,18 @@ class Observable:
                 "priority": priority,
             },
         )
+
+
+class Runtime:
+    """Lifecycle hooks for best-effort, presentable agent shutdown state."""
+
+    def __init__(self, hooks: list[Callable[[], Any]]) -> None:
+        self._hooks = hooks
+
+    def on_shutdown(self, handler: Callable[[], Any]) -> None:
+        if not callable(handler):
+            raise TypeError("runtime.on_shutdown expects a callable with no required arguments")
+        self._hooks.append(handler)
 
 
 class UserInbox:
@@ -325,6 +343,9 @@ class ContextErrors:
 
     def search(self, text: str) -> list[dict[str, Any]]:
         return self._call_supervisor("context.errors.search", {"text": text})
+
+    def for_task(self, task_id: int) -> list[dict[str, Any]]:
+        return self._call_supervisor("context.errors.for_task", {"task_id": task_id})
 
 
 class ContextObservations:
@@ -501,12 +522,14 @@ def _kernel_main(
 
     inbox = KernelInbox(call_supervisor)
     loop_budget = LoopBudget()
+    shutdown_hooks: list[Callable[[], Any]] = []
     namespace: dict[str, Any] = {"__name__": "__agent_repl_kernel__", "inbox": inbox}
     namespace["loop_limit"] = loop_budget.set_next
     namespace["_agent_repl_guard_while"] = loop_budget.guard_while
     namespace["_agent_repl_guarded_iterable"] = loop_budget.guarded_iterable
     if role == "agent":
         namespace["observable"] = Observable(call_supervisor)
+        namespace["runtime"] = Runtime(shutdown_hooks)
         namespace["user"] = User(call_supervisor)
         namespace["tasks"] = Tasks(call_supervisor)
         namespace["workspace"] = Workspace(call_supervisor)
@@ -524,6 +547,11 @@ def _kernel_main(
         command = commands.get()
         kind = command["kind"]
         if kind == "stop":
+            for hook in shutdown_hooks:
+                try:
+                    hook()
+                except BaseException as error:
+                    call_supervisor("runtime.shutdown_error", {"error": f"{type(error).__name__}: {error}"})
             return
         if kind == "deliver":
             message = command["message"]
@@ -646,13 +674,13 @@ class PersistentKernel:
             self._execution_observer(state)
 
     def stop(self) -> None:
-        self._serving_capabilities.clear()
         if self._process.is_alive():
             self._commands.put({"kind": "stop"})
             self._process.join(timeout=1)
         if self._process.is_alive():
             self._process.terminate()
             self._process.join(timeout=1)
+        self._serving_capabilities.clear()
         if self._capability_thread is not None:
             self._capability_thread.join(timeout=1)
 

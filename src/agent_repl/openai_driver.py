@@ -14,11 +14,14 @@ from typing import Any, Callable, Protocol
 
 from .kernel import KernelResult
 from .supervisor import Supervisor
+from .token_budget import TokenBudgetExceeded, TokenReservation, estimate_tokens
 
 
 # Default to the current cost-sensitive tier for early runtime experiments.
 DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
 DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_CONTEXT_WINDOW_MESSAGES = 8
 DEFAULT_CONTEXT_WINDOW_CHARS = 4_000
@@ -58,6 +61,9 @@ For an inbox activation, read the actual message from `inbox.pending()` before
 replying. Do not give a canned acknowledgement or claim you lack its contents.
 `inbox`, `tasks`, `workspace`, `context`, `observable`, `user`, `agents`, and `conflicts`
 are already injected REPL globals. Never import them as Python modules.
+`runtime.on_shutdown(handler)` optionally registers a short best-effort hook to
+publish final presentable state before a normal kernel shutdown; never depend on
+it for durable task completion or forced termination.
 `context.local` stores small JSON values scoped to a session, message, task,
 error, or current line. Only entries explicitly set with model_visible=True are
 included in a later relevant activation; use it sparingly.
@@ -81,6 +87,8 @@ the current completed work fully satisfies, explicitly acknowledge that one
 message rather than leaving it to trigger duplicate work later.
 Use observable.publish(...) for state worth showing by default, and
 user.inbox.add(...) only for concise messages that need the user's attention.
+Call `observable.publish(name, value)` normally; a single dictionary is also
+accepted to publish multiple named values.
 You can use ordinary persistent Python variables and the granted runtime
 capabilities. Do not explain the code outside the Python source.
 Use `tasks.announce(title)`, `tasks.take(task_or_id)`, `tasks.complete(task_or_id)`, and
@@ -196,6 +204,8 @@ class OpenAICompatibleAgentDriver:
         api_key_environment: str,
         base_url: str | None = None,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        transport: str = "responses",
+        output_token_reserve: int = 1_024,
     ) -> None:
         self.model = model
         self._client = client
@@ -205,6 +215,8 @@ class OpenAICompatibleAgentDriver:
         self.api_key_environment = api_key_environment
         self.base_url = base_url
         self.request_timeout = request_timeout
+        self.transport = transport
+        self.output_token_reserve = output_token_reserve
         self._http_log_path: Path | None = None
 
     def set_http_log_path(self, path: str) -> None:
@@ -273,13 +285,19 @@ class OpenAICompatibleAgentDriver:
 
         arm_idle_deadline()
         try:
-            response = client.responses.create(
-                model=self.model,
-                instructions=_INSTRUCTIONS + _ROLE_POLICIES.get(role, "\nRole policy: Complete only your assigned task and communicate durable results."),
-                input=json.dumps(request),
-                stream=True,
-            )
-            raw_output, resolved_model = self._read_stream(response, received_delta)
+            instructions = _INSTRUCTIONS + _ROLE_POLICIES.get(role, "\nRole policy: Complete only your assigned task and communicate durable results.")
+            if self.transport == "responses":
+                response = client.responses.create(model=self.model, instructions=instructions, input=json.dumps(request), stream=True)
+                raw_output, resolved_model = self._read_stream(response, received_delta)
+            elif self.transport == "chat_completions":
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(request)}],
+                    stream=True,
+                )
+                raw_output, resolved_model = self._read_chat_stream(response, received_delta)
+            else:
+                raise ValueError(f"unsupported model transport: {self.transport}")
         except Exception as error:
             closed = datetime.now(timezone.utc)
             if timed_out.is_set():
@@ -327,6 +345,23 @@ class OpenAICompatibleAgentDriver:
             if delta:
                 text = str(delta)
                 parts.append(text)
+                if on_delta is not None:
+                    on_delta(text)
+        return "".join(parts), resolved_model
+
+    @staticmethod
+    def _read_chat_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None]:
+        parts: list[str] = []
+        resolved_model: str | None = None
+        for chunk in response:
+            resolved_model = getattr(chunk, "model", resolved_model)
+            choices = getattr(chunk, "choices", [])
+            if not choices:
+                continue
+            delta = getattr(choices[0], "delta", None)
+            text = getattr(delta, "content", None)
+            if text:
+                text = str(text); parts.append(text)
                 if on_delta is not None:
                     on_delta(text)
         return "".join(parts), resolved_model
@@ -430,6 +465,20 @@ class OpenRouterAgentDriver(OpenAICompatibleAgentDriver):
         )
 
 
+class GroqAgentDriver(OpenAICompatibleAgentDriver):
+    """Groq Responses API; useful for fast, free-tier smoke tests."""
+
+    def __init__(self, model: str = DEFAULT_GROQ_MODEL, client: ResponsesClient | None = None, request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS) -> None:
+        super().__init__(model, client, provider_name="Groq", api_key_environment="GROQ_API_KEY", base_url="https://api.groq.com/openai/v1", request_timeout=request_timeout)
+
+
+class GeminiAgentDriver(OpenAICompatibleAgentDriver):
+    """Gemini's OpenAI-compatible streaming chat-completions endpoint."""
+
+    def __init__(self, model: str = DEFAULT_GEMINI_MODEL, client: ResponsesClient | None = None, request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS) -> None:
+        super().__init__(model, client, provider_name="Google Gemini", api_key_environment="GEMINI_API_KEY", base_url="https://generativelanguage.googleapis.com/v1beta/openai/", request_timeout=request_timeout, transport="chat_completions")
+
+
 class OpenAIAgentController:
     """Connects durable runtime state to a single OpenAI-planned agent turn."""
 
@@ -488,23 +537,37 @@ class OpenAIAgentController:
         if working_context:
             activation[0]["working_context"] = working_context
         planned: PlannedTurn | None = None
+        reservation: TokenReservation | None = None
         try:
             if on_phase is not None:
                 on_phase("planning")
             activation[0]["agent_role"] = self.supervisor.agent_role(self.agent)
+            estimated_input = estimate_tokens(json.dumps(activation)) + estimate_tokens(_INSTRUCTIONS)
+            reservation = self.supervisor.token_budget.reserve(estimated_input, self.driver.output_token_reserve)
+            self._publish_budget()
             planned = self.driver.plan(activation, model_feedback, on_delta, role=self.supervisor.agent_role(self.agent))
+            self.supervisor.token_budget.settle(reservation, estimated_input + estimate_tokens(planned.raw_output))
+            reservation = None
+            self._publish_budget()
             if on_program is not None:
                 on_program(planned)
             self._validate_program(planned.source)
         except OpenAIConfigurationError:
+            if reservation is not None:
+                self.supervisor.token_budget.settle(reservation, reservation.estimated_input_tokens)
+                self._publish_budget()
             raise
         except Exception as error:
+            if reservation is not None:
+                self.supervisor.token_budget.settle(reservation, reservation.estimated_input_tokens)
+                self._publish_budget()
+            error_text = f"{type(error).__name__}: {error}"
             instruction = "Your previous output was rejected. Return one valid Python program only."
             if isinstance(error, SyntaxError) and "escape" in str(error).lower():
                 instruction = "Your program has an invalid escape sequence. Use a raw regex string such as r'\\s+' or double each backslash, then return corrected Python only."
             feedback: dict[str, Any] = {
                 "active": True,
-                "error": f"{type(error).__name__}: {error}",
+                "error": error_text,
                 "instruction": instruction,
             }
             if planned is not None:
@@ -519,7 +582,19 @@ class OpenAIAgentController:
                 show_by_default=False,
                 priority=100,
             )
-            return KernelResult("error", error=f"{type(error).__name__}: {error}")
+            lowered = error_text.lower()
+            if "ratelimit" in lowered or "rate limit" in lowered or "status code: 429" in lowered or " 429" in lowered:
+                retry_after = self._retry_after_seconds(error_text)
+                self.supervisor.publish_state(
+                    self.agent,
+                    "provider",
+                    {"status": "rate_limited", "provider": self.driver.provider_name, "model": self.driver.model, "retry_after_seconds": retry_after, "error": error_text},
+                    presenter="error",
+                    label="Provider",
+                    show_by_default=True,
+                    priority=100,
+                )
+            return KernelResult("error", error=error_text)
         if on_phase is not None:
             on_phase("executing")
         self.supervisor.set_turn_messages(self.agent, [relevant[-1].id])
@@ -533,6 +608,14 @@ class OpenAIAgentController:
                 "model_error",
                 {"active": False, "status": "resolved"},
                 presenter="error",
+                show_by_default=False,
+            )
+            self.supervisor.publish_state(
+                self.agent,
+                "provider",
+                {"status": "available", "provider": self.driver.provider_name, "model": self.driver.model},
+                presenter="json",
+                label="Provider",
                 show_by_default=False,
             )
         else:
@@ -560,6 +643,12 @@ class OpenAIAgentController:
                 priority=100,
             )
         return result
+
+    def _publish_budget(self) -> None:
+        self.supervisor.publish_state(
+            self.agent, "token_budget", self.supervisor.token_budget.snapshot(), presenter="json",
+            label="Token budget", show_by_default=True, priority=90,
+        )
 
     def _context_window(self) -> list[dict[str, Any]]:
         """A bounded continuity aid; deeper history remains explicitly pullable."""
@@ -596,6 +685,11 @@ class OpenAIAgentController:
             {"id": task.id, "owner": task.owner, "title": task.title, "state": task.state, "details": task.details}
             for task in self.supervisor.tasks.delegated(self.agent)
         ][-DEFAULT_PENDING_WORK_ITEMS:]
+
+    @staticmethod
+    def _retry_after_seconds(error: str) -> float:
+        match = re.search(r"retry[- ]after[^0-9]*(\d+(?:\.\d+)?)", error, re.IGNORECASE)
+        return min(300.0, max(1.0, float(match.group(1)))) if match else 30.0
 
     @staticmethod
     def _validate_program(source: str) -> None:

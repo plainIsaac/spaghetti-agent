@@ -14,6 +14,7 @@ from .supervisor import Supervisor
 from .tasks import TaskRegistry
 from .working_context import WorkingContext
 from .workspace import Workspace
+from .token_budget import TokenBudget
 
 
 class _AgentTurnSession:
@@ -45,9 +46,11 @@ class MultiAgentSession:
         self._drivers: dict[str, OpenAICompatibleAgentDriver] = {}
 
     @classmethod
-    def open(cls, data_dir: str, coordinator: str = "coordinator", specialists: list[str] | None = None) -> "MultiAgentSession":
+    def open(cls, data_dir: str, coordinator: str = "coordinator", specialists: list[str] | None = None, workspace_root: str | None = None) -> "MultiAgentSession":
         root = Path(data_dir); root.mkdir(parents=True, exist_ok=True)
-        supervisor = Supervisor(InboxJournal(str(root / "inbox.sqlite"), str(root / "conversation.jsonl")), ObservableStateRegistry(str(root / "observable-state.sqlite")), TaskRegistry(str(root / "tasks.sqlite")), WorkingContext(str(root / "working-context.sqlite")), Workspace(Path.cwd(), str(root / "workspace.sqlite")))
+        workspace = Path(workspace_root) if workspace_root is not None else Path.cwd()
+        workspace.mkdir(parents=True, exist_ok=True)
+        supervisor = Supervisor(InboxJournal(str(root / "inbox.sqlite"), str(root / "conversation.jsonl")), ObservableStateRegistry(str(root / "observable-state.sqlite")), TaskRegistry(str(root / "tasks.sqlite")), WorkingContext(str(root / "working-context.sqlite")), Workspace(workspace, str(root / "workspace.sqlite")), TokenBudget(str(root / "token-budget.sqlite")))
         return cls(supervisor, coordinator, specialists or ["researcher", "builder"])
 
     def start_workers(self, drivers: dict[str, OpenAICompatibleAgentDriver], default_context_window: bool = True) -> None:
@@ -62,6 +65,7 @@ class MultiAgentSession:
     def _spawn_agent(self, agent: str, role: str) -> None:
         parent_driver = next(iter(self._drivers.values()))
         driver = type(parent_driver)(parent_driver.model, request_timeout=parent_driver.request_timeout)
+        driver.output_token_reserve = parent_driver.output_token_reserve
         self.agents.append(agent)
         self.supervisor.create_repl(agent); self.supervisor.start_agent_kernel(agent)
         self.supervisor.set_agent_role(agent, role)
@@ -97,7 +101,7 @@ class MultiAgentSession:
             for task in tasks:
                 for error in self.supervisor.tasks.errors(task.id):
                     recent_errors.append({"task_id": task.id, "owner": agent, "error": error["error"], "count": error["count"]})
-        return {"agents": agents, "active_tasks": active_tasks, "recent_errors": recent_errors[-6:], "branches": self.supervisor.workspace.branches()}
+        return {"agents": agents, "active_tasks": active_tasks, "recent_errors": recent_errors[-6:], "branches": self.supervisor.workspace.branches(), "token_budget": self.supervisor.token_budget.snapshot()}
 
     def user_messages(self):
         return self.supervisor.journal.pending("user")
@@ -127,4 +131,4 @@ class MultiAgentSession:
 
     def close(self) -> None:
         for worker in self._workers.values(): worker.close()
-        self.supervisor.close(); self.supervisor.journal.close(); self.supervisor.observable_state.close(); self.supervisor.tasks.close(); self.supervisor.working_context.close(); self.supervisor.workspace.close()
+        self.supervisor.close(); self.supervisor.journal.close(); self.supervisor.observable_state.close(); self.supervisor.tasks.close(); self.supervisor.working_context.close(); self.supervisor.workspace.close(); self.supervisor.token_budget.close()
