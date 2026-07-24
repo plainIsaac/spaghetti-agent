@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from multiprocessing import get_context
 from multiprocessing.queues import Queue
+import multiprocessing
+import os
 import queue
+import sys
 import threading
 from typing import Any, Callable
 
@@ -23,6 +26,27 @@ class KernelResult:
 
 
 DEFAULT_NON_COLLECTION_LOOP_LIMIT = 1_000
+
+
+def _configure_background_processes() -> None:
+    """Keep multiprocessing workers from opening a console on Windows.
+
+    The runtime is normally launched from a terminal, but it is also commonly
+    started by an editor or the web UI.  ``spawn`` starts a fresh interpreter
+    on Windows; using ``python.exe`` in that case can create a visible console
+    window for every kernel.  ``pythonw.exe`` has the same interpreter without
+    a console subsystem.  Do this once before obtaining a spawn context.
+    """
+    if os.name != "nt":
+        return
+    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+    if os.path.exists(pythonw):
+        multiprocessing.set_executable(pythonw)
+
+
+def _close_process_queue(value: Queue[Any]) -> None:
+    value.close()
+    value.join_thread()
 
 
 class LoopLimitExceeded(RuntimeError):
@@ -629,6 +653,7 @@ class PersistentKernel:
         role: str = "agent",
         execution_observer: Callable[[ExecutionState], None] | None = None,
     ) -> None:
+        _configure_background_processes()
         context = get_context("spawn")
         self.name = name
         self.role = role
@@ -648,6 +673,7 @@ class PersistentKernel:
         self._lock = threading.Lock()
         self._next_request_id = 0
         self._execution = ExecutionState(None, "idle", None)
+        self._closed = False
 
     def start(self) -> None:
         self._process.start()
@@ -712,6 +738,8 @@ class PersistentKernel:
             self._execution_observer(state)
 
     def stop(self) -> None:
+        if self._closed:
+            return
         if self._process.is_alive():
             self._commands.put({"kind": "stop"})
             self._process.join(timeout=1)
@@ -721,6 +749,7 @@ class PersistentKernel:
         self._serving_capabilities.clear()
         if self._capability_thread is not None:
             self._capability_thread.join(timeout=1)
+        self._close_resources()
 
     def terminate(self) -> bool:
         """Immediately stop a wedged kernel; durable state is recovered by its supervisor."""
@@ -731,6 +760,7 @@ class PersistentKernel:
             self._process.join(timeout=1)
         if self._capability_thread is not None:
             self._capability_thread.join(timeout=1)
+        self._close_resources()
         self._set_execution(
             ExecutionState(
                 self._execution.request_id,
@@ -741,6 +771,14 @@ class PersistentKernel:
             )
         )
         return was_alive
+
+    def _close_resources(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for channel in (self._commands, self._responses, self._capability_requests, self._capability_responses):
+            _close_process_queue(channel)
+        self._process.close()
 
     @property
     def execution(self) -> ExecutionState:

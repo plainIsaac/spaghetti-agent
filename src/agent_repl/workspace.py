@@ -56,6 +56,13 @@ class Workspace:
             raise ValueError("workspace.run timeout_seconds must be between 1 and 60")
         root_context = self._execution_root(task_id)
         with root_context as execution_root:
+            startupinfo = None
+            creationflags = 0
+            if os.name == "nt":
+                # Verification commands are background work, never interactive
+                # terminals.  Prevent console windows when the host has no
+                # inherited console (for example an editor-launched web UI).
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             try:
                 completed = subprocess.run(
                     command,
@@ -65,6 +72,8 @@ class Workspace:
                     stderr=subprocess.STDOUT,
                     timeout=timeout_seconds,
                     shell=False,
+                    startupinfo=startupinfo,
+                    creationflags=creationflags,
                 )
                 exit_code, output, timed_out = completed.returncode, completed.stdout[-16_000:], False
             except subprocess.TimeoutExpired as error:
