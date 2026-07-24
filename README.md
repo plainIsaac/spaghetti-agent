@@ -240,11 +240,18 @@ generated project workspaces out of commits.
 
 ## Development instructions
 
-Create and activate a Python 3.11+ virtual environment, then install the package
-with its development dependencies:
+Create and activate a Python 3.11+ virtual environment, then install Spaghetti
+Agent in editable mode with its development dependencies:
 
 ```text
-python -m pip install -e ".[dev]"
+python -m pip install --editable ".[dev]"
+```
+
+The `--editable` installation keeps the `spaghetti-agent` command linked to
+this checkout, so Python source changes take effect without reinstalling the
+package. Run the test suite with:
+
+```text
 python -m pytest -q
 ```
 
