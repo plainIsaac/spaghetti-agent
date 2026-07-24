@@ -147,6 +147,20 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(driver.provider_name, "OpenAI")
         self.assertEqual(driver.last_failures[0]["provider"], "OpenRouter")
 
+    def test_all_provider_failures_are_presentable_and_leave_the_message_pending(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Keep this pending.")
+        driver = FallbackAgentDriver([OpenRouterAgentDriver(client=FailingClient())])
+
+        result = session.run_openai_turn(driver)
+
+        self.assertEqual(result.status, "error")
+        provider = session.supervisor.observable_state.get("agent", "provider")
+        self.assertEqual(provider.value["status"], "rate_limited")
+        self.assertTrue(provider.show_by_default)
+        self.assertEqual(session.supervisor.journal.pending("agent")[0].text, "Keep this pending.")
+
     def test_http_trace_records_stream_open_and_close_times(self) -> None:
         with TemporaryDirectory() as directory:
             path = Path(directory) / "http.jsonl"

@@ -218,7 +218,7 @@ class ModelTurnWorker:
                 self.driver, on_phase=phase, default_context_window=self._default_context_window,
             )
             provider = self.session.supervisor.observable_state.get(self.session.agent, "provider")
-            if result is not None and result.status == "error" and provider is not None and provider.value.get("status") == "rate_limited":
+            if result is not None and result.status == "error" and provider is not None and provider.value.get("status") in {"rate_limited", "unavailable"}:
                 delay = float(provider.value.get("retry_after_seconds", 30.0))
                 phase("waiting_for_provider")
                 timer = Timer(delay, self.request_turn)

@@ -687,6 +687,23 @@ class OpenAIAgentController:
                 show_by_default=False,
                 priority=100,
             )
+            if planned is None:
+                self.supervisor.publish_state(
+                    self.agent,
+                    "provider",
+                    {
+                        "status": "rate_limited" if "rate limit" in error_text.lower() or "429" in error_text else "unavailable",
+                        "provider": self.driver.provider_name,
+                        "model": self.driver.model,
+                        "retry_after_seconds": self._retry_after_seconds(error_text) if "rate limit" in error_text.lower() or "429" in error_text else 60,
+                        "error": error_text,
+                        "fallback_failures": getattr(self.driver, "last_failures", []),
+                    },
+                    presenter="error",
+                    label="Provider",
+                    show_by_default=True,
+                    priority=100,
+                )
             lowered = error_text.lower()
             if "ratelimit" in lowered or "rate limit" in lowered or "status code: 429" in lowered or " 429" in lowered:
                 retry_after = self._retry_after_seconds(error_text)
