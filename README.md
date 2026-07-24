@@ -1,96 +1,105 @@
 # Agent REPL
 
-> **A quiet, programmable project agent—work is durable, inspectable, and yours to review.**
+**A local project agent that keeps work durable, reviewable, and quiet.**
 
-Agent REPL is a local project agent runtime. You send a project ordinary
-messages; a coordinator can delegate work, edit files through a managed
-workspace, run bounded verification commands, and submit changes for review
-and merge. The browser UI is intentionally quiet: it shows concise work,
-provider, and budget state by default, with logs and raw state available on
-inspection.
+Agent REPL turns a project request into a durable workflow instead of a long
+chat transcript. A coordinator can delegate implementation, agents work in
+managed branches, verification output is retained, and you decide when to
+merge a submitted change.
 
-This is an MVP for local, code-oriented projects. It is not a hosted service,
-and it does not sandbox the machine for you. Run it only in a workspace and
-environment you are willing to let an agent use.
+> Status: MVP. Best for experiments, prototypes, and small local projects.
 
-## What you can do
+## Why Agent REPL?
 
-- Create several independent local projects from one project-manager page.
-- Send normal-language requests without blocking on model responses.
-- Use a coordinator and builder/researcher specialists; agents can delegate
-  durable work and use managed task branches.
-- Review submitted diffs and merge branches from the browser UI.
-- Enforce a shared project token budget and see provider/model status.
-- Try OpenRouter, Groq, Gemini, or OpenAI-compatible inference.
-- Let agents run bounded, argv-only verification commands in the workspace.
+Most coding agents make progress hard to inspect: the user receives long
+messages while the actual work, errors, and decisions are scattered across a
+conversation. Agent REPL separates the two:
 
-## Good fits today
+- You send ordinary messages and can keep sending them while work runs.
+- Agents pull durable context through Python APIs instead of relying on a
+  growing chat history.
+- Tasks, provider state, token budget, branches, command output, and errors
+  are inspectable state.
+- Delegated work is submitted for review; it is never silently merged.
 
-- Prototype a small website, script, or proof of concept in a fresh workspace.
-- Ask for an incremental feature, then inspect the exact diff before merging.
-- Give a project a repeatable build/test command and let the agent verify its
-  own changes.
-- Explore multi-agent task delegation without flooding the user with agent
-  chatter.
+## Install
 
-It is not yet an “open any existing repository and work in place” tool. That
-needs an explicit workspace-attachment workflow, which is deliberately not
-part of this MVP.
-
-## Quick start (Windows PowerShell)
-
-Prerequisites: Python 3.11 or later and an API key for at least one provider.
-OpenRouter is a convenient low-cost testing option.
+Agent REPL is currently installed from source.
 
 ```powershell
-# From a source checkout:
+git clone <repository-url>
+Set-Location agent-repl
+
 py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install .
-
-Copy-Item .env.example .env
-# Edit .env and set OPENROUTER_API_KEY=...
-
-.\.venv\Scripts\agent-repl.exe --project-manager --openrouter --fallback-free --token-budget 20000
 ```
 
-Open the local URL printed by the command. Create a project, click **Open**,
-then send a request such as:
+Python 3.11+ is required. The `agent-repl` command is installed into the
+virtual environment.
 
-> Build a small static landing page with an `index.html` and `styles.css`.
-> Verify the page contains a `main` element, then submit the change for review.
+## Quick start
 
-The process remains running until you stop it with `Ctrl+C`.
+1. Copy the environment template and add one provider key.
 
-## Where files go
+   ```powershell
+   Copy-Item .env.example .env
+   # Edit .env and set OPENROUTER_API_KEY=...
+   ```
 
-In **project-manager mode**, Agent REPL does not inject files into your current
-directory or an existing repository. It creates an isolated workspace per
-project under the projects directory (default: `.agent-repl-projects` beside
-where you launch the command). The agent only writes and runs commands in that
-project workspace.
+2. Start the local project manager.
 
-The separate **standalone terminal mode** uses the current directory as its
-workspace. Treat that mode as direct local-process access and use it only when
-you intentionally want that behavior.
+   ```powershell
+   .\.venv\Scripts\agent-repl.exe --project-manager --openrouter --fallback-free --token-budget 20000
+   ```
 
-## Your first project workflow
+3. Open the printed local URL, create a project, and send a request:
 
-1. Create and open a project from the manager page.
-2. Send a normal message. It is immediately stored in the coordinator inbox.
-3. Watch **Work status** for active agents and tasks.
-4. Inspect **Verification** for test/command output.
-5. When a branch is submitted, inspect its diff under **Submitted branches**.
-6. Click **Merge reviewed branch** only after reviewing it.
+   > Build a small landing page with `index.html` and `styles.css`. Verify that
+   > the page contains a `main` element, then submit the result for review.
 
-If a provider is temporarily unavailable, the work remains pending. The
-**Inference** panel explains the provider/budget state and offers **Resume
-pending work**. Resuming reuses durable inbox work; it does not create a
-replacement task.
+4. Use the project page to watch work, inspect verification output and diffs,
+   then choose **Merge reviewed branch** when you are satisfied.
 
-## Providers and budgets
+Press `Ctrl+C` in the terminal to stop the manager.
 
-Choose exactly one primary provider:
+## How projects work
+
+The project manager creates an isolated workspace for each project:
+
+```text
+.agent-repl-projects/
+├── projects.sqlite                 # project registry
+└── project-1/
+    ├── project.json                # project name and inference policy
+    ├── runtime.sqlite              # inbox, tasks, state, branches, budget
+    └── workspace/                  # files the agents are allowed to change
+```
+
+**It does not inject files into the directory you launched it from or attach
+to an existing repository.** The MVP intentionally creates a fresh workspace
+per project. Existing-repository attachment is planned as an explicit future
+workflow, not an implicit side effect.
+
+The standalone terminal mode is different: it uses the current directory as
+its workspace. Use it only when you intentionally want direct local access.
+
+## What the UI shows
+
+| Area | Purpose |
+| --- | --- |
+| Inference | Provider/model, fallback state, token usage, and resume control |
+| Work status | Active agents and durable tasks |
+| Verification | Bounded command results, including output and exit status |
+| Submitted branches | Reviewable diffs and explicit merge action |
+| Inspect work | Raw state, logs, and conversation for debugging |
+
+If a provider fails or a budget is exhausted, work remains pending. Use
+**Resume pending work** after updating the provider policy or budget; it
+reuses durable work rather than creating duplicate tasks.
+
+## Providers
+
+Choose one primary provider when launching the manager:
 
 ```powershell
 agent-repl --project-manager --openrouter
@@ -99,77 +108,51 @@ agent-repl --project-manager --gemini
 agent-repl --project-manager --openai
 ```
 
-Required environment variables are respectively `OPENROUTER_API_KEY`,
-`GROQ_API_KEY`, `GEMINI_API_KEY`, and `OPENAI_API_KEY`. `--fallback-free` adds
-the available free-test providers after the selected one. A project’s ordered
-provider/model policy is durable and changing it restarts only that project’s
-runtime.
+| Provider | Environment variable |
+| --- | --- |
+| OpenRouter | `OPENROUTER_API_KEY` |
+| Groq | `GROQ_API_KEY` |
+| Gemini | `GEMINI_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
 
-Useful controls:
+Useful options:
 
 ```text
---model <provider-model>        Override the primary model
---token-budget <tokens>         Hard project/session estimated-token cap
---turn-token-reserve <tokens>   Capacity reserved before each model turn
---request-timeout <seconds>     First-token and stream-idle timeout
+--fallback-free                 Try configured free-test providers on failure
+--model MODEL                   Override the primary model
+--token-budget TOKENS           Set a hard project/session token limit
+--turn-token-reserve TOKENS     Reserve completion capacity before a turn
+--request-timeout SECONDS       First-token and stream-idle timeout
 --no-subagents                  Disable dynamic agent creation
 ```
 
-Token usage comes from provider-reported usage when available and otherwise
-uses a conservative estimate. A budget exhaustion leaves work durable and
-visible; raise the budget or update the project policy before resuming.
+Token usage uses provider-reported values when available and a conservative
+estimate otherwise.
 
-## Files, commands, and safety
+## Safety model
 
-Each project-manager project has:
+Agent REPL is a local-process tool, not a sandbox.
+
+- Project-manager agents can read/write only their managed project workspace
+  through the workspace API.
+- Verification commands use an argv list, not shell strings, run from that
+  workspace, and have a 60-second maximum timeout.
+- Those commands still execute with the permissions of the Agent REPL process.
+  Use a VM, container, or disposable machine when that is your requirement.
+- Provider HTTP traces and raw model programs are stored locally for debugging;
+  treat them as sensitive project data.
+
+## Agent workflow
+
+The default flow is deliberately simple:
 
 ```text
-.agent-repl-projects/
-  projects.sqlite              # manager registry shared by all projects
-  project-1/
-    project.json               # name and inference policy
-    runtime.sqlite             # inbox, tasks, state, workspace metadata, budget
-    workspace/                 # the actual project files
+user message → coordinator task → delegated branch work → verification
+            → submitted diff → user review → explicit merge
 ```
 
-Agents write files inside that project workspace through `workspace.write_text` or
-`workspace.write_file`. These writes are task-scoped, revision-aware, and use
-branches for delegated implementation work.
-
-Agents may verify work with `workspace.run(["program", "arg"])`. Commands run
-from the project workspace, never through a shell string, and have a maximum
-60-second timeout. Output is stored and displayed in the UI. This is a bounded
-interface, not a security boundary: it runs with the permissions of the local
-Agent REPL process.
-
-## Terminal use and diagnostics
-
-The browser project manager is the recommended MVP experience. For direct
-terminal experiments in the **current directory**:
-
-```powershell
-.\.venv\Scripts\agent-repl.exe --openrouter --single-agent
-```
-
-Terminal controls include `:help`, `:state`, `:agents`, `:model-log`,
-`:repl-log`, `:http-log`, and `:python`. They are diagnostics; ordinary input
-is always treated as a message for the agent.
-
-Provider HTTP traces and raw model-to-REPL records are kept locally in the
-chosen data directory for debugging. Treat them as sensitive: they can contain
-project prompts and generated code.
-
-## Known MVP limits
-
-- Free providers can be slow, rate-limited, or return imperfect code. The
-  runtime preserves work and supplies repair feedback, but no provider can
-  guarantee a successful project in one turn.
-- Review/merge is explicit: a submitted branch is not silently merged.
-- Project-manager commands execute in the isolated project workspace, but still
-  use the permissions of the local Agent REPL process. Use a VM or container if
-  that is your security requirement.
-- Existing project folders made by pre-MVP versions may contain older separate
-  SQLite files. New projects use one `runtime.sqlite` file.
+The runtime has deterministic coverage for this lifecycle, including
+branch-aware verification before merge.
 
 ## Development
 
@@ -177,6 +160,13 @@ project prompts and generated code.
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-The test suite includes a deterministic MVP acceptance flow:
-coordinator delegation → managed branch write → branch-aware verification →
-completion → review/merge.
+The suite includes the core MVP acceptance flow: delegation, managed branch
+write, verification, completion, review, and merge.
+
+## Limitations
+
+- Free models may be slow, rate-limited, or generate imperfect programs.
+- The agent runtime preserves and reports failures, but does not guarantee a
+  successful implementation in one model turn.
+- Repository attachment, container management, and a hosted installation path
+  are not MVP features yet.
