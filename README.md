@@ -201,8 +201,10 @@ branch verification, diff review, and explicit merge control.
 spaghetti-agent --openrouter
 ```
 
-This mode operates in the current directory. Normal input becomes a user
-message. Debug commands include:
+This mode operates in the current directory. On an interactive terminal it
+opens a compact dashboard with recent conversation, provider/runtime status,
+token usage, and agent activity. Normal input becomes a user message. Both
+slash commands and the older colon commands are accepted:
 
 | Command | Purpose |
 | --- | --- |
@@ -212,6 +214,12 @@ message. Debug commands include:
 | `:model-log` | Show the latest raw model program |
 | `:repl-log` | Show model-to-REPL evaluations and errors |
 | `:http-log` | Show provider request and stream timing |
+| `/help` | Show the available dashboard commands |
+| `/quit` | Exit the session |
+
+Use `--plain` to force the legacy line-oriented interface (useful for pipes,
+logs, and terminals that do not support ANSI rendering). Use `--tui` to force
+the dashboard when stdin/stdout are not detected as interactive.
 
 ### Failure and resume behavior
 
