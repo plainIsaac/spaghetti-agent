@@ -309,6 +309,8 @@ class Supervisor:
             if recipient not in self._repls:
                 raise KeyError(f"Unknown agent: {recipient}")
             task = self.tasks.announce(recipient, str(payload["title"]), payload.get("details"))
+            task = self.tasks.transition(recipient, task.id, "working")
+            self._active_tasks[recipient] = task.id
             self.tasks.set_delegator(task.id, agent)
             self._start_implementation_branch(recipient, task.id)
             message = self.journal.append(recipient=recipient, sender="supervisor", text=self._task_assignment_message(task))
