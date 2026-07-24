@@ -187,13 +187,23 @@ def main() -> None:
         if model_driver is None:
             parser.error("--project-manager requires a model provider (--openai, --openrouter, --groq, or --gemini)")
         def configure_project(session: MultiAgentSession) -> None:
-            session.supervisor.token_budget.set_limit(arguments.token_budget)
+            policy = session.inference_policy
+            session.supervisor.token_budget.set_limit(policy.get("token_budget", arguments.token_budget))
             drivers = {agent: model_driver.clone() for agent in session.agents}
             for driver in drivers.values():
-                driver.output_token_reserve = arguments.turn_token_reserve
+                driver.output_token_reserve = policy.get("turn_token_reserve", arguments.turn_token_reserve)
             session.start_workers(drivers, arguments.default_context_window)
             session.supervisor.allow_subagents = not arguments.no_subagents
-        manager = ProjectManager(arguments.projects_dir, configure_session=configure_project)
+        manager = ProjectManager(
+            arguments.projects_dir,
+            configure_session=configure_project,
+            default_inference_policy={
+                "token_budget": arguments.token_budget,
+                "turn_token_reserve": arguments.turn_token_reserve,
+                "fallback_free": arguments.fallback_free,
+                "providers": [{"provider": model_driver.provider_name, "model": model_driver.model}],
+            },
+        )
         ui = LocalProjectManagerUI(manager, port=arguments.web_port)
         print(f"Agent REPL project manager: {ui.url}")
         try:

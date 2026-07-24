@@ -22,7 +22,7 @@ class RuntimeSpikeTests(unittest.TestCase):
                 first = manager.create("Writing tool")
                 second = manager.create("Research tool")
                 self.assertEqual([project.name for project in manager.registry.list()], ["Writing tool", "Research tool"])
-                self.assertEqual(json.loads((Path(directory) / f"project-{first.id}" / "project.json").read_text())["format_version"], 1)
+                self.assertEqual(json.loads((Path(directory) / f"project-{first.id}" / "project.json").read_text())["format_version"], 2)
                 session = manager.open(first.id)
                 try:
                     self.assertTrue((Path(directory) / f"project-{first.id}" / "workspace").exists())
@@ -48,6 +48,19 @@ class RuntimeSpikeTests(unittest.TestCase):
                     self.assertEqual(configured, ["coordinator"])
                 finally:
                     session.close()
+            finally:
+                manager.close()
+
+    def test_project_inference_policy_is_durable_and_available_to_the_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manager = ProjectManager(directory, default_inference_policy={"token_budget": 900, "turn_token_reserve": 80, "fallback_free": True})
+            try:
+                project = manager.create("Budgeted")
+                policy = manager.set_inference_policy(project.id, {"token_budget": 700})
+                session = manager.open(project.id)
+                self.assertEqual(policy["token_budget"], 700)
+                self.assertEqual(session.inference_policy["turn_token_reserve"], 80)
+                self.assertEqual(project_index(manager)["projects"][0]["inference_policy"]["token_budget"], 700)
             finally:
                 manager.close()
 

@@ -27,8 +27,10 @@ def project_view(session: Any) -> dict[str, Any]:
         if branch["state"] == "submitted":
             item["diff"] = "\n".join(change["diff"] for change in session.supervisor.workspace.diff(branch["task_id"]))
         branches.append(item)
+    inference = snapshot.get("token_budget", session.supervisor.token_budget.snapshot())
+    inference["policy"] = getattr(session, "inference_policy", {})
     return {
-        "default": {"replies": replies, "state": presentable},
+        "default": {"replies": replies, "state": presentable, "inference": inference},
         "inspection": {
             "agents": snapshot["agents"],
             "tasks": snapshot["active_tasks"],
@@ -59,6 +61,7 @@ def project_index(manager: Any) -> dict[str, Any]:
                 "runtime_initialized": root.exists(),
                 "runtime_open": manager.is_open(project.id),
                 "workspace_path": str(root / "workspace") if (root / "workspace").exists() else None,
+                "inference_policy": manager.inference_policy(project.id),
             }
         )
     return {"projects": projects}
