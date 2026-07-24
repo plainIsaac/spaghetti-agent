@@ -1,13 +1,14 @@
 # Agent REPL
 
-**A local project agent that keeps work durable, reviewable, and quiet.**
+**A durable, programmable runtime for agents and the people working with them.**
 
-Agent REPL turns a project request into a durable workflow instead of a long
-chat transcript. A coordinator can delegate implementation, agents work in
-managed branches, verification output is retained, and you decide when to
-merge a submitted change.
+Agent REPL turns an agent conversation into durable, inspectable program state
+instead of a long chat transcript. You send ordinary messages; agents use a
+persistent Python REPL to pull context, manage tasks, publish concise state,
+and communicate intentionally. The managed project workspace is the first MVP
+application of that runtime—not its definition.
 
-> Status: MVP. Best for experiments, prototypes, and small local projects.
+> Status: MVP. Best for experiments, prototypes, and small agent workflows.
 
 ## Why Agent REPL?
 
@@ -18,9 +19,21 @@ conversation. Agent REPL separates the two:
 - You send ordinary messages and can keep sending them while work runs.
 - Agents pull durable context through Python APIs instead of relying on a
   growing chat history.
-- Tasks, provider state, token budget, branches, command output, and errors
-  are inspectable state.
-- Delegated work is submitted for review; it is never silently merged.
+- Tasks, provider state, token budget, context, and errors are inspectable
+  state.
+- Runtime capabilities can be composed. Managed files, branches, and review
+  are one capability set, rather than an assumption every agent needs.
+
+## Core runtime and the MVP application
+
+The runtime provides durable inboxes, persistent agent kernels, task and error
+history, pull-based context APIs, presentable state, provider policy, and
+multi-agent coordination. It can support many kinds of agent workflows.
+
+The packaged MVP is a **managed-project application** built on those pieces:
+agents can write files in an isolated workspace, split work into branches, run
+bounded verification, and submit changes for review. It is a useful starting
+point, not a claim that every Agent REPL session is about local files.
 
 ## Install
 
@@ -62,9 +75,10 @@ virtual environment.
 
 Press `Ctrl+C` in the terminal to stop the manager.
 
-## How projects work
+## MVP application: managed projects
 
-The project manager creates an isolated workspace for each project:
+The project manager is one way to use the runtime. It creates an isolated
+workspace for each project:
 
 ```text
 .agent-repl-projects/
@@ -83,7 +97,7 @@ workflow, not an implicit side effect.
 The standalone terminal mode is different: it uses the current directory as
 its workspace. Use it only when you intentionally want direct local access.
 
-## What the UI shows
+## What the MVP UI shows
 
 | Area | Purpose |
 | --- | --- |
@@ -134,7 +148,8 @@ estimate otherwise.
 Agent REPL is a local-process tool, not a sandbox.
 
 - Project-manager agents can read/write only their managed project workspace
-  through the workspace API.
+  through the workspace API. This is a capability of that application, not a
+  general requirement of the runtime.
 - Verification commands use an argv list, not shell strings, run from that
   workspace, and have a 60-second maximum timeout.
 - Those commands still execute with the permissions of the Agent REPL process.
@@ -142,9 +157,9 @@ Agent REPL is a local-process tool, not a sandbox.
 - Provider HTTP traces and raw model programs are stored locally for debugging;
   treat them as sensitive project data.
 
-## Agent workflow
+## Runtime model
 
-The default flow is deliberately simple:
+The managed-project flow is deliberately simple:
 
 ```text
 user message → coordinator task → delegated branch work → verification
@@ -153,6 +168,10 @@ user message → coordinator task → delegated branch work → verification
 
 The runtime has deterministic coverage for this lifecycle, including
 branch-aware verification before merge.
+
+Outside that application, the core model remains the same: messages become
+durable inbox events, agents retrieve the context they need through Python,
+and state is published for people or other agents to inspect.
 
 ## Development
 
@@ -168,5 +187,5 @@ write, verification, completion, review, and merge.
 - Free models may be slow, rate-limited, or generate imperfect programs.
 - The agent runtime preserves and reports failures, but does not guarantee a
   successful implementation in one model turn.
-- Repository attachment, container management, and a hosted installation path
-  are not MVP features yet.
+- Existing-repository attachment, container management, and a hosted
+  installation path are not MVP features yet.
