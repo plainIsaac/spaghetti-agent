@@ -485,6 +485,33 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(denied.status, "error")
         self.assertIn("disabled", denied.error)
 
+    def test_agent_spawn_accepts_task_title_and_details_without_role(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+
+        def spawn(name: str, _role: str) -> None:
+            session.supervisor.create_repl(name)
+            session.supervisor.start_agent_kernel(name)
+
+        session.supervisor.set_agent_spawner(spawn)
+        result = session.evaluate(
+            "_result = agents.spawn('reviewer', 'Review the editor branch', {'goal': 'check it'})"
+        )
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value["agent"], "reviewer")
+        self.assertEqual(session.supervisor.tasks.list("reviewer")[0].title, "Review the editor branch")
+
+    def test_compatible_message_aliases_forward_to_agent_messaging(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.supervisor.create_repl("reviewer")
+        session.supervisor.start_agent_kernel("reviewer")
+
+        result = session.evaluate("_result = context.send_message('reviewer', 'Please review this.')")
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value["recipient"], "reviewer")
+        self.assertEqual(session.supervisor.journal.pending("reviewer")[0].text, "Please review this.")
+
     def test_task_errors_create_challenges_and_promote_recurring_trouble(self) -> None:
         session = SingleAgentSession.open()
         self.addCleanup(session.close)

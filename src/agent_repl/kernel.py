@@ -8,10 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from multiprocessing import get_context
 from multiprocessing.queues import Queue
-import multiprocessing
-import os
 import queue
-import sys
 import threading
 from typing import Any, Callable
 
@@ -29,19 +26,8 @@ DEFAULT_NON_COLLECTION_LOOP_LIMIT = 1_000
 
 
 def _configure_background_processes() -> None:
-    """Keep multiprocessing workers from opening a console on Windows.
-
-    The runtime is normally launched from a terminal, but it is also commonly
-    started by an editor or the web UI.  ``spawn`` starts a fresh interpreter
-    on Windows; using ``python.exe`` in that case can create a visible console
-    window for every kernel.  ``pythonw.exe`` has the same interpreter without
-    a console subsystem.  Do this once before obtaining a spawn context.
-    """
-    if os.name != "nt":
-        return
-    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-    if os.path.exists(pythonw):
-        multiprocessing.set_executable(pythonw)
+    """Keep the normal Python executable for reliable worker diagnostics."""
+    return
 
 
 def _close_process_queue(value: Queue[Any]) -> None:
@@ -471,6 +457,7 @@ class LocalContext:
 
 class Context:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
+        self._call_supervisor = call_supervisor
         self.tasks = ContextTasks(call_supervisor)
         self.errors = ContextErrors(call_supervisor)
         self.observations = ContextObservations(call_supervisor)
@@ -480,6 +467,13 @@ class Context:
         self.conflicts = ContextConflicts(call_supervisor)
         self.local = LocalContext(call_supervisor)
 
+    def send(self, recipient: str, text: str) -> dict[str, Any]:
+        """Compatibility alias for the common context.send(recipient, text) form."""
+        return self._call_supervisor("agents.message", {"recipient": recipient, "text": text})
+
+    def send_message(self, recipient: str, text: str) -> dict[str, Any]:
+        """Compatibility alias for context.send_message(recipient, text)."""
+        return self.send(recipient, text)
 
 class Agents:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:
@@ -488,7 +482,26 @@ class Agents:
     def message(self, recipient: str, text: str) -> dict[str, Any]:
         return self._call_supervisor("agents.message", {"recipient": recipient, "text": text})
 
-    def spawn(self, name: str, role: str, task: str, details: Any = None) -> dict[str, Any]:
+    def send(self, recipient: str, text: str) -> dict[str, Any]:
+        """Compatibility alias for agents.send(recipient, text)."""
+        return self.message(recipient, text)
+
+    def send_message(self, recipient: str, text: str) -> dict[str, Any]:
+        """Compatibility alias for agents.send_message(recipient, text)."""
+        return self.message(recipient, text)
+
+    def spawn(self, name: str, role: str, task: Any = None, details: Any = None) -> dict[str, Any]:
+        # Compatibility with the natural three-argument form
+        # spawn(name, task_title, details). The four-argument form remains the
+        # canonical API: spawn(name, role, task_title, details).
+        if (
+            isinstance(task, dict)
+            and details is None
+            and not {"id", "state", "title"}.intersection(task)
+        ):
+            details = task
+            task = role
+            role = "agent"
         return self._call_supervisor("agents.spawn", {"name": name, "role": role, "task": task, "details": details})
 
 
@@ -653,7 +666,6 @@ class PersistentKernel:
         role: str = "agent",
         execution_observer: Callable[[ExecutionState], None] | None = None,
     ) -> None:
-        _configure_background_processes()
         context = get_context("spawn")
         self.name = name
         self.role = role

@@ -107,6 +107,12 @@ iterate it. When no suitable specialist exists, create one with
 title string: do not call `tasks.announce` first and do not pass a task dict.
 That call creates the child REPL and gives it the requested task; its result
 contains `agent` and `task_id`.
+The preferred messaging API is `agents.message(recipient, text)` for
+agent-to-agent messages and `inbox.reply_to_latest(text)` for user replies.
+Compatible aliases `context.send(recipient, text)`,
+`context.send_message(recipient, text)`, `agents.send(recipient, text)`, and
+`agents.send_message(recipient, text)` are also supported. For compatibility,
+`agents.spawn(name, task_title, details)` is accepted when no role is needed.
 Do not delegate the same work again after spawning. The child will send the
 delegator a durable `Task <id> completed ...` inbox message. Do not poll or
 wait for an invented observable status. Never use `while`, polling, or sleeping
