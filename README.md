@@ -21,6 +21,7 @@ and review concise results instead of babysitting every model turn.
 
 > **MVP status:** Spaghetti Agent is experimental. Expect rough edges, especially
 > with free or small models.
+> We expect you to give full machine access to the agent, insure your usage is in such environment.
 
 - Spaghetti Agent runs locally with the permissions of its process. It is not an
   operating-system sandbox.
