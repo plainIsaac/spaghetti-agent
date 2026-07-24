@@ -144,6 +144,17 @@ class RuntimeSpikeTests(unittest.TestCase):
             finally:
                 workspace.close()
 
+    def test_workspace_verification_sees_task_branch_files_before_merge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            try:
+                workspace.branch("builder", 1)
+                workspace.write_text("builder", 1, "index.html", "<main>branch</main>")
+                result = workspace.run("builder", 1, [sys.executable, "-c", "from pathlib import Path; assert '<main>' in Path('index.html').read_text()"])
+                self.assertEqual(result["exit_code"], 0)
+            finally:
+                workspace.close()
+
     def test_workspace_branch_isolated_until_submitted_and_merged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)

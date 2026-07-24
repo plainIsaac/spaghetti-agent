@@ -11,6 +11,8 @@ import json
 import sqlite3
 import subprocess
 from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
+import shutil
 from threading import RLock
 
 
@@ -50,14 +52,23 @@ class Workspace:
             raise ValueError("workspace.run expects a non-empty argument list, not a shell string")
         if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 60:
             raise ValueError("workspace.run timeout_seconds must be between 1 and 60")
-        try:
-            completed = subprocess.run(command, cwd=self.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout_seconds, shell=False)
-            exit_code, output, timed_out = completed.returncode, completed.stdout[-16_000:], False
-        except subprocess.TimeoutExpired as error:
-            captured = error.stdout or ""
-            if isinstance(captured, bytes):
-                captured = captured.decode(errors="replace")
-            exit_code, output, timed_out = None, (str(captured) + "\nTimed out.")[-16_000:], True
+        with TemporaryDirectory(prefix="agent-repl-verify-") as temporary_root:
+            execution_root = Path(temporary_root)
+            if self.root.exists():
+                shutil.copytree(self.root, execution_root, dirs_exist_ok=True)
+            if self._is_branch(task_id):
+                for change in self._connection.execute("SELECT path,text FROM workspace_branch_files WHERE task_id=?", (task_id,)):
+                    target = execution_root / str(change[0])
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(str(change[1]), encoding="utf-8")
+            try:
+                completed = subprocess.run(command, cwd=execution_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout_seconds, shell=False)
+                exit_code, output, timed_out = completed.returncode, completed.stdout[-16_000:], False
+            except subprocess.TimeoutExpired as error:
+                captured = error.stdout or ""
+                if isinstance(captured, bytes):
+                    captured = captured.decode(errors="replace")
+                exit_code, output, timed_out = None, (str(captured) + "\nTimed out.")[-16_000:], True
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "INSERT INTO workspace_command_runs(task_id,agent,command_json,exit_code,output,timed_out,created_at) VALUES(?,?,?,?,?,?,?)",
