@@ -1,7 +1,12 @@
 __pycache__/
+.pytest_cache/
 .venv/
+build/
 *.py[cod]
 *.sqlite
 *.egg-info/
 .env
 .agent-repl/
+.agent-repl-*/
+.spaghetti-agent/
+.spaghetti-agent-projects/
