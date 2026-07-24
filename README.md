@@ -37,32 +37,54 @@ point, not a claim that every Agent REPL session is about local files.
 
 ## Install
 
-Agent REPL is currently installed from source.
+Agent REPL is installed from source with standard Python packaging. It requires
+Python 3.11 or later and Git. The runtime dependencies (`openai` and
+`python-dotenv`) are installed automatically by `pip`.
 
-```powershell
-git clone <repository-url>
-Set-Location agent-repl
+```text
+git clone https://github.com/plainIsaac/spaghetti-agent.git agent-repl
+cd agent-repl
 
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install .
+python -m venv .venv
 ```
 
-Python 3.11+ is required. The `agent-repl` command is installed into the
-virtual environment.
+Activate the virtual environment using the command for your shell:
+
+```text
+# macOS / Linux (sh, bash, zsh)
+source .venv/bin/activate
+
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+
+# Windows Command Prompt
+.venv\Scripts\activate.bat
+```
+
+Then install the application:
+
+```text
+python -m pip install --upgrade pip
+python -m pip install .
+```
+
+The `agent-repl` command is now available while that environment is active.
+If you prefer not to activate it, invoke the virtual-environment Python
+directly using your platform's path syntax.
 
 ## Quick start
 
-1. Copy the environment template and add one provider key.
+1. Create a `.env` file in the repository root, using `.env.example` as the
+   template, and add one provider key. Any text editor works; for example:
 
-   ```powershell
-   Copy-Item .env.example .env
-   # Edit .env and set OPENROUTER_API_KEY=...
+   ```text
+   OPENROUTER_API_KEY=your_key_here
    ```
 
-2. Start the local project manager.
+2. Start the local project manager from the activated environment.
 
-   ```powershell
-   .\.venv\Scripts\agent-repl.exe --project-manager --openrouter --fallback-free --token-budget 20000
+   ```text
+   agent-repl --project-manager --openrouter --fallback-free --token-budget 20000
    ```
 
 3. Open the printed local URL, create a project, and send a request:
@@ -115,7 +137,7 @@ reuses durable work rather than creating duplicate tasks.
 
 Choose one primary provider when launching the manager:
 
-```powershell
+```text
 agent-repl --project-manager --openrouter
 agent-repl --project-manager --groq
 agent-repl --project-manager --gemini
@@ -175,8 +197,11 @@ and state is published for people or other agents to inspect.
 
 ## Development
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+Install the development tools, then run the test suite:
+
+```text
+python -m pip install -e ".[dev]"
+python -m pytest -q
 ```
 
 The suite includes the core MVP acceptance flow: delegation, managed branch

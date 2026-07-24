@@ -5,6 +5,9 @@ description = "Durable programmable runtime for agent workflows"
 requires-python = ">=3.11"
 dependencies = ["openai>=1.0", "python-dotenv>=1.0"]
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
 [project.scripts]
 agent-repl = "agent_repl.__main__:main"
 
