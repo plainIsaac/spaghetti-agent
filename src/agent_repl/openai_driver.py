@@ -184,12 +184,17 @@ class OpenAIConfigurationError(RuntimeError):
     pass
 
 
+class ProviderFallbackError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class PlannedTurn:
     source: str
     request: dict[str, Any]
     raw_output: str
     resolved_model: str | None = None
+    usage: dict[str, int] | None = None
 
 
 class OpenAICompatibleAgentDriver:
@@ -222,6 +227,11 @@ class OpenAICompatibleAgentDriver:
     def set_http_log_path(self, path: str) -> None:
         """Enable a local, redacted provider HTTP trace for debugging."""
         self._http_log_path = Path(path)
+
+    def clone(self) -> "OpenAICompatibleAgentDriver":
+        clone = type(self)(self.model, request_timeout=self.request_timeout)
+        clone.output_token_reserve = self.output_token_reserve
+        return clone
 
     def _append_http_log(self, entry: dict[str, Any]) -> None:
         if self._http_log_path is None:
@@ -288,14 +298,14 @@ class OpenAICompatibleAgentDriver:
             instructions = _INSTRUCTIONS + _ROLE_POLICIES.get(role, "\nRole policy: Complete only your assigned task and communicate durable results.")
             if self.transport == "responses":
                 response = client.responses.create(model=self.model, instructions=instructions, input=json.dumps(request), stream=True)
-                raw_output, resolved_model = self._read_stream(response, received_delta)
+                raw_output, resolved_model, usage = self._read_stream(response, received_delta)
             elif self.transport == "chat_completions":
                 response = client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(request)}],
                     stream=True,
                 )
-                raw_output, resolved_model = self._read_chat_stream(response, received_delta)
+                raw_output, resolved_model, usage = self._read_chat_stream(response, received_delta)
             else:
                 raise ValueError(f"unsupported model transport: {self.transport}")
         except Exception as error:
@@ -315,7 +325,7 @@ class OpenAICompatibleAgentDriver:
         source = self._strip_code_fence(raw_output)
         if not source.strip():
             raise RuntimeError("OpenAI returned an empty agent program")
-        return PlannedTurn(source, request, raw_output, resolved_model or self.model)
+        return PlannedTurn(source, request, raw_output, resolved_model or self.model, usage)
 
     def _discard_timed_out_client(self, client: ResponsesClient) -> None:
         """Do not reuse a socket force-closed to stop a timed-out stream."""
@@ -326,19 +336,22 @@ class OpenAICompatibleAgentDriver:
                 self._client = None
 
     @staticmethod
-    def _read_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None]:
+    def _read_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None, dict[str, int] | None]:
         # The small compatibility path keeps injected test clients usable.
         if hasattr(response, "output_text"):
             text = str(response.output_text)
             if on_delta is not None and text:
                 on_delta(text)
-            return text, getattr(response, "model", None)
+            return text, getattr(response, "model", None), OpenAICompatibleAgentDriver._usage_dict(getattr(response, "usage", None))
         parts: list[str] = []
         resolved_model: str | None = None
+        usage: dict[str, int] | None = None
         for event in response:
             completed_response = getattr(event, "response", None)
             if completed_response is not None:
                 resolved_model = getattr(completed_response, "model", resolved_model)
+                usage = OpenAICompatibleAgentDriver._usage_dict(getattr(completed_response, "usage", None)) or usage
+            usage = OpenAICompatibleAgentDriver._usage_dict(getattr(event, "usage", None)) or usage
             if getattr(event, "type", None) != "response.output_text.delta":
                 continue
             delta = getattr(event, "delta", "")
@@ -347,14 +360,16 @@ class OpenAICompatibleAgentDriver:
                 parts.append(text)
                 if on_delta is not None:
                     on_delta(text)
-        return "".join(parts), resolved_model
+        return "".join(parts), resolved_model, usage
 
     @staticmethod
-    def _read_chat_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None]:
+    def _read_chat_stream(response: Any, on_delta: Callable[[str], None] | None) -> tuple[str, str | None, dict[str, int] | None]:
         parts: list[str] = []
         resolved_model: str | None = None
+        usage: dict[str, int] | None = None
         for chunk in response:
             resolved_model = getattr(chunk, "model", resolved_model)
+            usage = OpenAICompatibleAgentDriver._usage_dict(getattr(chunk, "usage", None)) or usage
             choices = getattr(chunk, "choices", [])
             if not choices:
                 continue
@@ -364,7 +379,24 @@ class OpenAICompatibleAgentDriver:
                 text = str(text); parts.append(text)
                 if on_delta is not None:
                     on_delta(text)
-        return "".join(parts), resolved_model
+        return "".join(parts), resolved_model, usage
+
+    @staticmethod
+    def _usage_dict(usage: Any) -> dict[str, int] | None:
+        """Normalize OpenAI-style usage without depending on a provider SDK type."""
+        if usage is None:
+            return None
+        values = {
+            "input_tokens": getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None),
+            "output_tokens": getattr(usage, "output_tokens", None) or getattr(usage, "completion_tokens", None),
+            "total_tokens": getattr(usage, "total_tokens", None),
+        }
+        values = {key: int(value) for key, value in values.items() if value is not None}
+        if not values:
+            return None
+        if "total_tokens" not in values:
+            values["total_tokens"] = values.get("input_tokens", 0) + values.get("output_tokens", 0)
+        return values
 
     def _get_client(self) -> ResponsesClient:
         if self._client is not None:
@@ -479,6 +511,58 @@ class GeminiAgentDriver(OpenAICompatibleAgentDriver):
         super().__init__(model, client, provider_name="Google Gemini", api_key_environment="GEMINI_API_KEY", base_url="https://generativelanguage.googleapis.com/v1beta/openai/", request_timeout=request_timeout, transport="chat_completions")
 
 
+class FallbackAgentDriver:
+    """Tries configured providers in order, retaining the one that served a turn."""
+
+    def __init__(self, drivers: list[OpenAICompatibleAgentDriver]) -> None:
+        if not drivers:
+            raise ValueError("at least one provider driver is required")
+        self.drivers = drivers
+        self._selected = drivers[0]
+        self.last_failures: list[dict[str, str]] = []
+
+    @property
+    def model(self) -> str:
+        return self._selected.model
+
+    @property
+    def provider_name(self) -> str:
+        return self._selected.provider_name
+
+    @property
+    def request_timeout(self) -> float:
+        return self._selected.request_timeout
+
+    @property
+    def output_token_reserve(self) -> int:
+        return self._selected.output_token_reserve
+
+    @output_token_reserve.setter
+    def output_token_reserve(self, value: int) -> None:
+        for driver in self.drivers:
+            driver.output_token_reserve = value
+
+    def set_http_log_path(self, path: str) -> None:
+        for driver in self.drivers:
+            driver.set_http_log_path(path)
+
+    def clone(self) -> "FallbackAgentDriver":
+        return FallbackAgentDriver([driver.clone() for driver in self.drivers])
+
+    def plan(self, activation: list[dict[str, Any]], model_feedback: dict[str, Any] | None, on_delta: Callable[[str], None] | None = None, role: str = "agent") -> PlannedTurn:
+        self.last_failures = []
+        for driver in self.drivers:
+            try:
+                planned = driver.plan(activation, model_feedback, on_delta, role)
+            except Exception as error:
+                self.last_failures.append({"provider": driver.provider_name, "model": driver.model, "error": f"{type(error).__name__}: {error}"})
+                continue
+            self._selected = driver
+            return planned
+        details = "; ".join(f"{item['provider']}: {item['error']}" for item in self.last_failures)
+        raise ProviderFallbackError(f"all configured providers failed: {details}")
+
+
 class OpenAIAgentController:
     """Connects durable runtime state to a single OpenAI-planned agent turn."""
 
@@ -546,9 +630,10 @@ class OpenAIAgentController:
             reservation = self.supervisor.token_budget.reserve(estimated_input, self.driver.output_token_reserve)
             self._publish_budget()
             planned = self.driver.plan(activation, model_feedback, on_delta, role=self.supervisor.agent_role(self.agent))
-            self.supervisor.token_budget.settle(reservation, estimated_input + estimate_tokens(planned.raw_output))
+            actual_tokens = (planned.usage or {}).get("total_tokens", estimated_input + estimate_tokens(planned.raw_output))
+            self.supervisor.token_budget.settle(reservation, actual_tokens)
             reservation = None
-            self._publish_budget()
+            self._publish_budget(planned.usage)
             if on_program is not None:
                 on_program(planned)
             self._validate_program(planned.source)
@@ -613,7 +698,12 @@ class OpenAIAgentController:
             self.supervisor.publish_state(
                 self.agent,
                 "provider",
-                {"status": "available", "provider": self.driver.provider_name, "model": self.driver.model},
+                {
+                    "status": "available",
+                    "provider": self.driver.provider_name,
+                    "model": self.driver.model,
+                    "fallback_failures": getattr(self.driver, "last_failures", []),
+                },
                 presenter="json",
                 label="Provider",
                 show_by_default=False,
@@ -644,9 +734,13 @@ class OpenAIAgentController:
             )
         return result
 
-    def _publish_budget(self) -> None:
+    def _publish_budget(self, last_turn_usage: dict[str, int] | None = None) -> None:
+        budget = self.supervisor.token_budget.snapshot()
+        if last_turn_usage is not None:
+            budget["last_turn_usage"] = last_turn_usage
+            budget["last_turn_accounting"] = "provider_reported"
         self.supervisor.publish_state(
-            self.agent, "token_budget", self.supervisor.token_budget.snapshot(), presenter="json",
+            self.agent, "token_budget", budget, presenter="json",
             label="Token budget", show_by_default=True, priority=90,
         )
 

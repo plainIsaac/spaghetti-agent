@@ -13,6 +13,7 @@ from .openai_driver import (
     DEFAULT_GEMINI_MODEL,
     GroqAgentDriver,
     GeminiAgentDriver,
+    FallbackAgentDriver,
     OpenAIAgentDriver,
     OpenAIConfigurationError,
     OpenRouterAgentDriver,
@@ -158,6 +159,7 @@ def main() -> None:
     parser.add_argument("--request-timeout", type=float, default=30.0, help="Provider first-token and stream-idle timeout in seconds")
     parser.add_argument("--token-budget", type=int, help="Hard estimated token limit for this session or each project")
     parser.add_argument("--turn-token-reserve", type=int, default=1024, help="Estimated completion tokens reserved before each model turn")
+    parser.add_argument("--fallback-free", action="store_true", help="On provider failure, try other configured free-test providers")
     arguments = parser.parse_args()
     arguments.data_dir.mkdir(parents=True, exist_ok=True)
     multi_agent = arguments.multi_agent and not arguments.demo
@@ -170,6 +172,9 @@ def main() -> None:
         model_driver = GroqAgentDriver(arguments.model or DEFAULT_GROQ_MODEL, request_timeout=arguments.request_timeout)
     if arguments.gemini:
         model_driver = GeminiAgentDriver(arguments.model or DEFAULT_GEMINI_MODEL, request_timeout=arguments.request_timeout)
+    if arguments.fallback_free and model_driver is not None:
+        alternatives = [OpenRouterAgentDriver(request_timeout=arguments.request_timeout), GroqAgentDriver(request_timeout=arguments.request_timeout), GeminiAgentDriver(request_timeout=arguments.request_timeout)]
+        model_driver = FallbackAgentDriver([model_driver, *[driver for driver in alternatives if type(driver) is not type(model_driver)]])
     if arguments.turn_token_reserve < 0:
         parser.error("--turn-token-reserve must be non-negative")
     if arguments.token_budget is not None and arguments.token_budget < 1:
@@ -181,10 +186,9 @@ def main() -> None:
     if arguments.project_manager:
         if model_driver is None:
             parser.error("--project-manager requires a model provider (--openai, --openrouter, --groq, or --gemini)")
-        driver_type = type(model_driver)
         def configure_project(session: MultiAgentSession) -> None:
             session.supervisor.token_budget.set_limit(arguments.token_budget)
-            drivers = {agent: driver_type(model_driver.model, request_timeout=arguments.request_timeout) for agent in session.agents}
+            drivers = {agent: model_driver.clone() for agent in session.agents}
             for driver in drivers.values():
                 driver.output_token_reserve = arguments.turn_token_reserve
             session.start_workers(drivers, arguments.default_context_window)
@@ -215,8 +219,7 @@ def main() -> None:
     if multi_agent and model_driver is None:
         parser.error("The default coordinator runtime requires --openai or --openrouter; use --demo or --single-agent for local experiments")
     if multi_agent and model_driver is not None:
-        driver_type = type(model_driver)
-        drivers = {agent: driver_type(model_driver.model, request_timeout=arguments.request_timeout) for agent in session.agents}
+        drivers = {agent: model_driver.clone() for agent in session.agents}
         for driver in drivers.values():
             driver.output_token_reserve = arguments.turn_token_reserve
         for agent, driver in drivers.items():

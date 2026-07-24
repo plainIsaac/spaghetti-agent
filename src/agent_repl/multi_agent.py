@@ -64,8 +64,7 @@ class MultiAgentSession:
 
     def _spawn_agent(self, agent: str, role: str) -> None:
         parent_driver = next(iter(self._drivers.values()))
-        driver = type(parent_driver)(parent_driver.model, request_timeout=parent_driver.request_timeout)
-        driver.output_token_reserve = parent_driver.output_token_reserve
+        driver = parent_driver.clone()
         self.agents.append(agent)
         self.supervisor.create_repl(agent); self.supervisor.start_agent_kernel(agent)
         self.supervisor.set_agent_role(agent, role)

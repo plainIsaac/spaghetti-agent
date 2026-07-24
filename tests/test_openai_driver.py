@@ -7,7 +7,7 @@ import json
 import unittest
 from time import sleep
 
-from agent_repl import GeminiAgentDriver, OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
+from agent_repl import FallbackAgentDriver, GeminiAgentDriver, OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
 from agent_repl.token_budget import TokenBudget, TokenBudgetExceeded
 from agent_repl.session import ModelTurnWorker, _NOT_READY
 from agent_repl.openai_driver import (
@@ -30,6 +30,19 @@ class FakeResponses:
 class FakeClient:
     def __init__(self, output_text: str) -> None:
         self.responses = FakeResponses(output_text)
+
+
+class FailingClient:
+    def __init__(self) -> None:
+        self.responses = SimpleNamespace(create=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("rate limit")))
+
+
+class UsageClient:
+    def __init__(self, output_text: str) -> None:
+        self.responses = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
+            output_text=output_text,
+            usage=SimpleNamespace(input_tokens=12, output_tokens=7, total_tokens=19),
+        ))
 
 
 class FakeChatClient:
@@ -122,6 +135,17 @@ class OpenAIDriverTests(unittest.TestCase):
         self.assertEqual(planned.resolved_model, "gemini-test")
         self.assertEqual(client.calls[0]["model"], "gemini-test")
         self.assertTrue(client.calls[0]["stream"])
+
+    def test_fallback_uses_the_next_provider_and_records_the_failure(self) -> None:
+        primary = OpenRouterAgentDriver(model="first", client=FailingClient())
+        fallback = OpenAIAgentDriver(model="second", client=FakeClient("_result = None"))
+        driver = FallbackAgentDriver([primary, fallback])
+
+        planned = driver.plan([], None)
+
+        self.assertEqual(planned.resolved_model, "second")
+        self.assertEqual(driver.provider_name, "OpenAI")
+        self.assertEqual(driver.last_failures[0]["provider"], "OpenRouter")
 
     def test_http_trace_records_stream_open_and_close_times(self) -> None:
         with TemporaryDirectory() as directory:
@@ -255,6 +279,18 @@ class OpenAIDriverTests(unittest.TestCase):
         budget = session.supervisor.token_budget.snapshot()
         self.assertEqual(budget["status"], "available")
         self.assertEqual(budget["used_tokens"], 0)
+
+    def test_provider_usage_is_used_when_available(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        session.send("Handle this.")
+
+        result = session.run_openai_turn(OpenAIAgentDriver(client=UsageClient("inbox.ack(inbox.pending()[0]['id'])")))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(session.supervisor.token_budget.snapshot()["used_tokens"], 19)
+        budget_state = session.supervisor.observable_state.get("agent", "token_budget").value
+        self.assertEqual(budget_state["last_turn_accounting"], "provider_reported")
 
 
 class TokenBudgetTests(unittest.TestCase):

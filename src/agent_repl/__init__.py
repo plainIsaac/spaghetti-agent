@@ -11,6 +11,7 @@ from .openai_driver import (
     OpenAIConfigurationError,
     GroqAgentDriver,
     GeminiAgentDriver,
+    FallbackAgentDriver,
     OpenRouterAgentDriver,
 )
 from .session import SingleAgentSession
@@ -35,6 +36,7 @@ __all__ = [
     "OpenAIConfigurationError",
     "GroqAgentDriver",
     "GeminiAgentDriver",
+    "FallbackAgentDriver",
     "OpenRouterAgentDriver",
     "PersistentKernel",
     "RestartReport",
