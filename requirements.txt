@@ -1,0 +1,3 @@
+# Runtime dependencies. Keep in sync with pyproject.toml.
+openai>=1.0
+python-dotenv>=1.0
