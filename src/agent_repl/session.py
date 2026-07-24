@@ -59,11 +59,8 @@ class SingleAgentSession:
         journal = InboxJournal(inbox_path, debug_log_path)
         observable_state = ObservableStateRegistry(observable_state_path)
         model_log_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("model-programs.jsonl"))
-        task_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("tasks.sqlite"))
-        context_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("working-context.sqlite"))
-        workspace_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("workspace.sqlite"))
-        budget_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("token-budget.sqlite"))
-        return cls(Supervisor(journal, observable_state, TaskRegistry(task_path), WorkingContext(context_path), Workspace(Path.cwd(), workspace_path), TokenBudget(budget_path)), agent, model_log_path)
+        runtime_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("runtime.sqlite"))
+        return cls(Supervisor(journal, observable_state, TaskRegistry(runtime_path), WorkingContext(runtime_path), Workspace(Path.cwd(), runtime_path), TokenBudget(runtime_path)), agent, model_log_path)
 
     def send(self, text: str) -> Message:
         """Queue ordinary user text without executing it as agent source code."""

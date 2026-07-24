@@ -26,6 +26,9 @@ class RuntimeSpikeTests(unittest.TestCase):
                 session = manager.open(first.id)
                 try:
                     self.assertTrue((Path(directory) / f"project-{first.id}" / "workspace").exists())
+                    self.assertTrue((Path(directory) / f"project-{first.id}" / "runtime.sqlite").exists())
+                    self.assertFalse((Path(directory) / f"project-{first.id}" / "tasks.sqlite").exists())
+                    self.assertFalse((Path(directory) / f"project-{first.id}" / "workspace.sqlite").exists())
                     self.assertTrue(manager.is_open(first.id))
                     self.assertFalse((Path(directory) / f"project-{second.id}" / "workspace").exists())
                 finally:

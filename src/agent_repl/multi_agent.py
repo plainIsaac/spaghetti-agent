@@ -50,7 +50,10 @@ class MultiAgentSession:
         root = Path(data_dir); root.mkdir(parents=True, exist_ok=True)
         workspace = Path(workspace_root) if workspace_root is not None else Path.cwd()
         workspace.mkdir(parents=True, exist_ok=True)
-        supervisor = Supervisor(InboxJournal(str(root / "inbox.sqlite"), str(root / "conversation.jsonl")), ObservableStateRegistry(str(root / "observable-state.sqlite")), TaskRegistry(str(root / "tasks.sqlite")), WorkingContext(str(root / "working-context.sqlite")), Workspace(workspace, str(root / "workspace.sqlite")), TokenBudget(str(root / "token-budget.sqlite")))
+        # One project database keeps backup, inspection, and portability simple.
+        # The durable components own separate tables within this same SQLite file.
+        runtime_db = str(root / "runtime.sqlite")
+        supervisor = Supervisor(InboxJournal(runtime_db, str(root / "conversation.jsonl")), ObservableStateRegistry(runtime_db), TaskRegistry(runtime_db), WorkingContext(runtime_db), Workspace(workspace, runtime_db), TokenBudget(runtime_db))
         return cls(supervisor, coordinator, specialists or ["researcher", "builder"])
 
     def start_workers(self, drivers: dict[str, OpenAICompatibleAgentDriver], default_context_window: bool = True) -> None:
@@ -127,6 +130,14 @@ class MultiAgentSession:
 
     def pending_agent_messages(self) -> int:
         return sum(len(self.supervisor.journal.pending(agent)) for agent in self.agents)
+
+    def resume_pending(self) -> int:
+        """Explicitly retry durable pending work without creating new tasks."""
+        resumed = 0
+        for agent, worker in self._workers.items():
+            if self.supervisor.journal.pending(agent) and worker.request_turn():
+                resumed += 1
+        return resumed
 
     def close(self) -> None:
         for worker in self._workers.values(): worker.close()
