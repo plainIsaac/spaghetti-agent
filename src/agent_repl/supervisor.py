@@ -393,7 +393,12 @@ class Supervisor:
         if kind == "working_context.clear":
             return self.working_context.clear(agent, str(payload.get("lifetime", "session")), str(payload.get("scope_id", "")), payload.get("key"))
         if kind == "tasks.wait_for":
-            task = self.tasks.wait_for(agent, _task_id(payload["task_id"]), str(payload["name"]), payload.get("equals"))
+            requested_id = _task_id(payload["task_id"])
+            requested = self.tasks.get(requested_id)
+            task_id = requested_id if requested is not None and requested.owner == agent else self._active_tasks.get(agent)
+            if task_id is None:
+                raise KeyError(requested_id)
+            task = self.tasks.wait_for(agent, task_id, str(payload["name"]), payload.get("equals"))
             return {"id": task.id, "state": task.state}
         if kind == "tasks.report_error":
             return self.tasks.report_error(agent, _task_id(payload["task_id"]), str(payload["error"]))
@@ -466,6 +471,8 @@ class Supervisor:
                 # Treat spawning a known, running specialist as ergonomic task
                 # delegation. Models naturally use one verb for both cases.
                 task = self.tasks.announce(child, task_title, payload.get("details"))
+                task = self.tasks.transition(child, task.id, "working")
+                self._active_tasks[child] = task.id
                 self.tasks.set_delegator(task.id, agent)
                 self._start_implementation_branch(child, task.id)
                 message = self.journal.append(recipient=child, sender="supervisor", text=self._task_assignment_message(task))
@@ -475,6 +482,8 @@ class Supervisor:
                 return {"agent": child, "task_id": task.id, "role": payload["role"], "existing": True}
             self._agent_spawner(child, str(payload["role"]))
             task = self.tasks.announce(child, task_title, payload.get("details"))
+            task = self.tasks.transition(child, task.id, "working")
+            self._active_tasks[child] = task.id
             self.tasks.set_delegator(task.id, agent)
             self._start_implementation_branch(child, task.id)
             message = self.journal.append(recipient=child, sender="supervisor", text=self._task_assignment_message(task))

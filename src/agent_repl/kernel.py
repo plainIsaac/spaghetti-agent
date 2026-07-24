@@ -280,6 +280,24 @@ class Tasks:
         return self._call_supervisor("tasks.delegate", {"agent": agent, "title": title, "details": details})
 
 
+class ActiveTasks:
+    """Live compatibility view for the agent's current non-completed tasks."""
+
+    def __init__(self, tasks: Tasks) -> None:
+        self._tasks = tasks
+
+    def _items(self) -> list[dict[str, Any]]:
+        return [task for task in self._tasks.list() if task["state"] != "completed"]
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        return self._items()[index]
+
+    def __iter__(self):
+        return iter(self._items())
+
+    def __len__(self) -> int:
+        return len(self._items())
+
 class Workspace:
     """Managed files for task-scoped, conflict-aware coordinated work."""
 
@@ -551,6 +569,7 @@ def _kernel_main(
         namespace["runtime"] = Runtime(shutdown_hooks)
         namespace["user"] = User(call_supervisor)
         namespace["tasks"] = Tasks(call_supervisor)
+        namespace["active_tasks"] = ActiveTasks(namespace["tasks"])
         namespace["workspace"] = Workspace(call_supervisor)
         namespace["context"] = Context(call_supervisor)
         namespace["agents"] = Agents(call_supervisor)
