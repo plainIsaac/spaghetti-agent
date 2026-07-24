@@ -1,5 +1,32 @@
 # Agent REPL runtime spike
 
+## MVP: local project agent
+
+The current MVP is a local project manager: send a project a normal message and
+the coordinator can delegate implementation, make managed workspace changes,
+run bounded verification commands, and submit branches for review/merge. The
+browser UI stays quiet by default while exposing active work, inference/budget,
+verification output, and diffs when needed.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[openai]"
+# Put OPENROUTER_API_KEY=... in .env
+agent-repl --project-manager --openrouter --fallback-free --token-budget 10000
+```
+
+Open the printed local URL, create a project, and send a small build request.
+The project keeps one `runtime.sqlite` file for durable runtime state and a
+normal `workspace/` directory for project files. The manager keeps its own
+shared `projects.sqlite` registry.
+
+MVP acceptance scenarios:
+
+1. Ask for a tiny static page; review the submitted branch and merge it.
+2. Ask to modify an existing small project; the agent runs its tests through
+   `workspace.run([...])` and the Verification panel shows the result.
+3. Use a provider chain with a small budget; on a provider outage, pending work
+   remains durable and can be resumed without creating duplicate tasks.
+
 This is the first executable experiment for the semantics in
 [`runtime-semantics.md`](runtime-semantics.md). It is intentionally not a
 general agent framework or a complete REPL.
