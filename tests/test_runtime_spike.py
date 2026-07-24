@@ -13,9 +13,42 @@ from agent_repl.workspace import Workspace
 from agent_repl.ui import project_index, project_view
 from agent_repl.web_ui import LocalProjectManagerUI, LocalProjectUI, make_handler, make_project_manager_handler
 from agent_repl.projects import ProjectManager
+from agent_repl.multi_agent import MultiAgentSession
 
 
 class RuntimeSpikeTests(unittest.TestCase):
+    def test_mvp_delegated_build_verifies_branch_then_merges(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            session = MultiAgentSession.open(directory, workspace_root=str(Path(directory) / "workspace"))
+            try:
+                coordinator = session.supervisor.agent_kernel("coordinator")
+                builder = session.supervisor.agent_kernel("builder")
+                delegated = coordinator.evaluate(
+                    "coord = tasks.announce('Build landing page')\n"
+                    "tasks.take(coord)\n"
+                    "child = tasks.delegate('builder', 'Write landing page')\n"
+                    "tasks.wait_for(child['task_id'], 'builder_done', True)\n"
+                    "_result = (coord['id'], child['task_id'])"
+                )
+                self.assertEqual(delegated.status, "ok")
+                coord_id, child_id = delegated.value
+                built = builder.evaluate(
+                    "task = active_tasks[0]\n"
+                    "workspace.write_file('index.html', '<main>hello</main>')\n"
+                    "import sys\n"
+                    "check = workspace.run([sys.executable, '-c', \"from pathlib import Path; assert '<main>' in Path('index.html').read_text()\"])\n"
+                    "observable.publish('builder_done', check.returncode == 0)\n"
+                    "_result = tasks.complete(task)", timeout=10
+                )
+                self.assertEqual(built.status, "ok")
+                self.assertEqual(session.supervisor.workspace.command_runs(child_id)[0]["exit_code"], 0)
+                merged = coordinator.evaluate(
+                    f"tasks.take({coord_id})\nworkspace.merge({child_id})\n_result = tasks.complete({coord_id})"
+                )
+                self.assertEqual(merged.status, "ok")
+                self.assertEqual((Path(directory) / "workspace" / "index.html").read_text(), "<main>hello</main>")
+            finally:
+                session.close()
     def test_project_manager_isolates_durable_project_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             manager = ProjectManager(directory)
