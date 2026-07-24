@@ -1,5 +1,5 @@
 [project]
-name = "agent-repl"
+name = "spaghetti-agent"
 version = "0.0.1"
 description = "Durable programmable runtime for agent workflows"
 requires-python = ">=3.11"
@@ -9,6 +9,7 @@ dependencies = ["openai>=1.0", "python-dotenv>=1.0"]
 dev = ["pytest>=8"]
 
 [project.scripts]
+spaghetti-agent = "agent_repl.__main__:main"
 agent-repl = "agent_repl.__main__:main"
 
 [build-system]
@@ -20,3 +21,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]

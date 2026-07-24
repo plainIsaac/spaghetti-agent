@@ -97,9 +97,9 @@ class _LoopGuardTransformer(ast.NodeTransformer):
 
 
 def _compile_agent_source(source: str) -> Any:
-    tree = ast.parse(source, "<agent-repl-kernel>", "exec")
+    tree = ast.parse(source, "<spaghetti-agent-kernel>", "exec")
     tree = _LoopGuardTransformer().visit(tree)
-    return compile(ast.fix_missing_locations(tree), "<agent-repl-kernel>", "exec")
+    return compile(ast.fix_missing_locations(tree), "<spaghetti-agent-kernel>", "exec")
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""OpenAI Responses API adapter for a transcript-free Agent REPL turn."""
+"""OpenAI Responses API adapter for a transcript-free Spaghetti Agent turn."""
 
 from __future__ import annotations
 
@@ -831,7 +831,7 @@ class OpenAIAgentController:
 
     @staticmethod
     def _validate_program(source: str) -> None:
-        tree = ast.parse(source, "<agent-repl-model-output>", "exec")
+        tree = ast.parse(source, "<spaghetti-agent-model-output>", "exec")
         runtime_globals = {"inbox", "tasks", "workspace", "context", "observable", "user", "agents", "conflicts"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import) and any(alias.name.split(".")[0] in runtime_globals for alias in node.names):

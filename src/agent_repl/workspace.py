@@ -52,7 +52,7 @@ class Workspace:
             raise ValueError("workspace.run expects a non-empty argument list, not a shell string")
         if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 60:
             raise ValueError("workspace.run timeout_seconds must be between 1 and 60")
-        with TemporaryDirectory(prefix="agent-repl-verify-") as temporary_root:
+        with TemporaryDirectory(prefix="spaghetti-agent-verify-") as temporary_root:
             execution_root = Path(temporary_root)
             if self.root.exists():
                 shutil.copytree(self.root, execution_root, dirs_exist_ok=True)

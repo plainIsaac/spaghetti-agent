@@ -144,7 +144,7 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.addCleanup(session.close)
         ui = LocalProjectUI(session).start()
         try:
-            self.assertIn("Agent REPL", urlopen(ui.url, timeout=2).read().decode())
+            self.assertIn("Spaghetti Agent", urlopen(ui.url, timeout=2).read().decode())
         finally:
             ui.shutdown()
     def test_managed_workspace_claims_writes_and_rejects_stale_revisions(self) -> None:

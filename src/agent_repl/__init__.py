@@ -1,4 +1,4 @@
-"""A small runtime spike for validating Agent REPL semantics."""
+"""The programmable runtime behind Spaghetti Agent."""
 
 from .isolation import IsolatedExecution
 from .journal import InboxJournal, Message

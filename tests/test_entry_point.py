@@ -42,7 +42,7 @@ class EntryPointTests(unittest.TestCase):
     def test_demo_entry_point_renders_default_state_and_agent_reply(self) -> None:
         output = StringIO()
         with tempfile.TemporaryDirectory() as directory:
-            with patch("sys.argv", ["agent-repl", "--demo", "--data-dir", str(Path(directory))]), patch(
+            with patch("sys.argv", ["spaghetti-agent", "--demo", "--data-dir", str(Path(directory))]), patch(
                 "builtins.input", side_effect=["Inspect the runtime.", ":quit"]
             ), patch("sys.stdout", output):
                 main()
@@ -55,7 +55,7 @@ class EntryPointTests(unittest.TestCase):
     def test_openai_mode_explains_missing_configuration(self) -> None:
         output = StringIO()
         with tempfile.TemporaryDirectory() as directory:
-            with patch("sys.argv", ["agent-repl", "--openai", "--data-dir", str(Path(directory))]), patch(
+            with patch("sys.argv", ["spaghetti-agent", "--openai", "--data-dir", str(Path(directory))]), patch(
                 "builtins.input", side_effect=["Inspect the runtime.", ":quit"]
             ), patch.dict("os.environ", {}, clear=True), patch("sys.stdout", output):
                 main()

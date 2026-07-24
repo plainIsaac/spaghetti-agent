@@ -11,7 +11,7 @@ from typing import Any
 from .ui import project_index, project_view
 
 
-_PAGE = """<!doctype html><meta charset=utf-8><title>Agent REPL</title>
+_PAGE = """<!doctype html><meta charset=utf-8><title>Spaghetti Agent</title>
 <style>body{font:16px system-ui;margin:0;background:#fafafa;color:#222}main{max-width:900px;margin:auto;padding:24px}#replies{white-space:pre-wrap}.reply{background:#fff;padding:12px;margin:8px 0;border-radius:8px}textarea{width:100%;min-height:84px;font:inherit}button{margin-top:8px;padding:8px 14px}details{background:#fff;margin-top:14px;padding:10px;border-radius:8px}pre{white-space:pre-wrap;overflow:auto}</style>
 <main><h1>Project</h1><section id=replies></section><form id=send><textarea name=text placeholder="Message the project agent…"></textarea><br><button>Send</button></form><details open><summary>Inference</summary><section id=inference></section></details><details open><summary>Work status</summary><section id=agents></section><section id=tasks></section></details><details open><summary>Verification</summary><section id=verification></section></details><details open><summary>Submitted branches</summary><section id=branches></section></details><details><summary>Inspect work</summary><pre id=inspection></pre></details></main>
 <script>const replies=document.querySelector('#replies'),inspection=document.querySelector('#inspection');
@@ -19,7 +19,7 @@ async function merge(id){let r=await fetch('/api/branches/'+id+'/merge',{method:
 async function refresh(){let view=await (await fetch('/api/view')).json(),work=view.inspection,inf=view.default.inference,p=inf.provider;replies.innerHTML=view.default.replies.map(r=>`<div class=reply><small>${r.sender}</small><br>${r.text}</div>`).join('')||'<p>No replies yet.</p>';document.querySelector('#inference').innerHTML=`<div class=reply><b>${p?p.provider:'No provider turn yet'}</b>${p?' · '+p.model:''}<br><b>${inf.status}</b> · ${inf.used_tokens} used${inf.reserved_tokens?' · '+inf.reserved_tokens+' reserved':''}${inf.remaining_tokens!==null?' · '+inf.remaining_tokens+' remaining':''}<br><small>${p&&p.fallback_failures&&p.fallback_failures.length?'Fallback: '+p.fallback_failures.map(x=>x.provider).join(', '):inf.last_turn_accounting||inf.method}</small><br><button onclick="resume()">Resume pending work</button></div>`;document.querySelector('#agents').innerHTML=work.agents.map(a=>`<div class=reply><b>${a.name}</b> · ${a.role} · ${a.phase}${a.pending_messages?' · '+a.pending_messages+' pending':''}</div>`).join('')||'<p>No active agents.</p>';document.querySelector('#tasks').innerHTML=work.tasks.map(t=>`<div class=reply>Task #${t.id} · ${t.owner} · ${t.state}<br>${t.title}</div>`).join('')||'<p>No active tasks.</p>';document.querySelector('#verification').innerHTML=(work.verification||[]).map(v=>`<div class=reply><b>${v.exit_code===0?'Passed':v.timed_out?'Timed out':'Failed'}</b> · ${v.command.join(' ')}<pre>${v.output}</pre></div>`).join('')||'<p>No verification commands have run.</p>';let branches=work.branches.filter(b=>b.state==='submitted');document.querySelector('#branches').innerHTML=branches.map(b=>`<div class=reply><b>Task #${b.task_id}</b> — ${b.agent}, ${b.files} file(s)<pre>${b.diff||'No changed files'}</pre><button onclick="merge(${b.task_id})">Merge reviewed branch</button></div>`).join('')||'<p>No submitted branches.</p>';inspection.textContent=JSON.stringify({state:view.default.state,inference:inf,...work},null,2)}
 document.querySelector('#send').onsubmit=async e=>{e.preventDefault();let text=new FormData(e.target).get('text').trim();if(!text)return;await fetch('/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})});e.target.reset();refresh()};refresh();setInterval(refresh,1500);</script>"""
 
-_PROJECT_PAGE = """<!doctype html><meta charset=utf-8><title>Agent REPL Projects</title>
+_PROJECT_PAGE = """<!doctype html><meta charset=utf-8><title>Spaghetti Agent Projects</title>
 <style>body{font:16px system-ui;max-width:760px;margin:32px auto;background:#fafafa}.card{background:#fff;padding:14px;margin:10px 0;border-radius:8px}input,button{font:inherit;padding:8px}</style>
 <h1>Projects</h1><form id=create><input name=name placeholder="New project name"><button>Create</button></form><section id=projects></section>
 <script>async function refresh(){let x=await(await fetch('/api/projects')).json();document.querySelector('#projects').innerHTML=x.projects.map(p=>`<div class=card><b>${p.name}</b> · ${p.state}${p.runtime_initialized?' · initialized':''}${p.state==='active'?` <button onclick="openProject(${p.id})">Open</button> <button onclick="closeProject(${p.id})">Close runtime</button> <button onclick="archive(${p.id})">Archive</button>`:''}</div>`).join('')||'<p>No projects yet.</p>'}async function openProject(id){let x=await(await fetch('/api/projects/'+id+'/open',{method:'POST'})).json();location.href=x.url}async function closeProject(id){await fetch('/api/projects/'+id+'/close',{method:'POST'});refresh()}async function archive(id){await fetch('/api/projects/'+id+'/archive',{method:'POST'});refresh()}document.querySelector('#create').onsubmit=async e=>{e.preventDefault();let name=new FormData(e.target).get('name').trim();if(!name)return;await fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name})});e.target.reset();refresh()};refresh()</script>"""
@@ -135,7 +135,7 @@ class LocalProjectManagerUI:
 
     def start(self) -> "LocalProjectManagerUI":
         if self._thread is None:
-            self._thread = Thread(target=self.server.serve_forever, name="agent-repl-project-manager-ui", daemon=True)
+            self._thread = Thread(target=self.server.serve_forever, name="spaghetti-agent-project-manager-ui", daemon=True)
             self._thread.start()
         return self
 
@@ -189,7 +189,7 @@ class LocalProjectUI:
 
     def start(self) -> "LocalProjectUI":
         if self._thread is None:
-            self._thread = Thread(target=self.server.serve_forever, name="agent-repl-web-ui", daemon=True)
+            self._thread = Thread(target=self.server.serve_forever, name="spaghetti-agent-web-ui", daemon=True)
             self._thread.start()
         return self
 

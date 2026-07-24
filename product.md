@@ -33,7 +33,7 @@ This is rather an abstract over implementation, and quite uninformed.
 The rest are to be ironed out.
 
 In other words:
-Agent REPL is a CLI for developer agents where the agent and user share a live execution environment instead of a chat transcript.
+Spaghetti Agent is a CLI for developer agents where the agent and user share a live execution environment instead of a chat transcript.
 Rather than exchanging long messages, both interact through a programmable state space: variables, functions, and explicit commands. The agent can store, reuse, and inspect state directly, while the user can inspect or modify the same runtime at any point.
 
 This makes the agent feel less like a chatbot and more like a collaborator inside the workspace. It reduces token overhead, improves context persistence, and makes long-running tasks easier to manage because important information lives in state, not in repeated text.

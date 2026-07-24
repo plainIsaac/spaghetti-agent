@@ -10,7 +10,7 @@ from typing import Any
 def _run_source(source: str, results: Queue[Any]) -> None:
     namespace: dict[str, Any] = {"__name__": "__agent_repl_isolated__"}
     try:
-        exec(compile(source, "<agent-repl-evaluation>", "exec"), namespace, namespace)
+        exec(compile(source, "<spaghetti-agent-evaluation>", "exec"), namespace, namespace)
         results.put(("ok", namespace.get("_result")))
     except BaseException as error:
         results.put(("error", f"{type(error).__name__}: {error}"))

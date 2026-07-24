@@ -6,7 +6,7 @@ conclusion from an experiment may amend it, but should not silently replace it.
 
 ## Product posture
 
-Agent REPL is a persistent, shared programmable environment. Chat is an easy
+Spaghetti Agent is a persistent, shared programmable environment. Chat is an easy
 human input surface, not the canonical record of work. The canonical record is
 live runtime state plus durable events and selected snapshots.
 

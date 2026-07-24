@@ -134,8 +134,8 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     _load_project_environment()
-    parser = argparse.ArgumentParser(description="Agent REPL single-agent session")
-    parser.add_argument("--data-dir", type=Path, default=Path(".agent-repl"), help="Directory for durable session state")
+    parser = argparse.ArgumentParser(description="Spaghetti Agent programmable runtime")
+    parser.add_argument("--data-dir", type=Path, default=Path(".spaghetti-agent"), help="Directory for durable session state")
     turn_mode = parser.add_mutually_exclusive_group()
     turn_mode.add_argument("--demo", action="store_true", help="Run a deterministic demo agent turn after each normal message")
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
@@ -148,7 +148,7 @@ def main() -> None:
     parser.add_argument("--no-subagents", action="store_true", help="Disable dynamic subagent creation")
     parser.add_argument("--web", action="store_true", help="Serve the local browser UI instead of the terminal UI")
     parser.add_argument("--project-manager", action="store_true", help="Serve the multi-project manager UI")
-    parser.add_argument("--projects-dir", type=Path, default=Path(".agent-repl-projects"), help="Directory for durable multi-project state")
+    parser.add_argument("--projects-dir", type=Path, default=Path(".spaghetti-agent-projects"), help="Directory for durable multi-project state")
     parser.add_argument("--web-port", type=int, default=8765, help="Local browser UI port")
     parser.add_argument("--model", help="Provider model override")
     parser.add_argument(
@@ -212,7 +212,7 @@ def main() -> None:
             },
         )
         ui = LocalProjectManagerUI(manager, port=arguments.web_port)
-        print(f"Agent REPL project manager: {ui.url}")
+        print(f"Spaghetti Agent project manager: {ui.url}")
         try:
             ui.server.serve_forever()
         except KeyboardInterrupt:
@@ -224,7 +224,7 @@ def main() -> None:
         str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
     )
     session.supervisor.token_budget.set_limit(arguments.token_budget)
-    print("Agent REPL. Send a message; the agent may continue independently. Use :help for controls.")
+    print("Spaghetti Agent. Send a message; the agent may continue independently. Use :help for controls.")
     seen_message_ids: set[int] = set()
     seen_state_revisions: dict[str, int] = {}
     def render_completion(result) -> None:
@@ -248,7 +248,7 @@ def main() -> None:
         worker = ModelTurnWorker(session, model_driver, render_completion, default_context_window=arguments.default_context_window) if model_driver is not None else None
     if arguments.web:
         ui = LocalProjectUI(session, port=arguments.web_port)
-        print(f"Agent REPL web UI: {ui.url}")
+        print(f"Spaghetti Agent web UI: {ui.url}")
         try:
             ui.server.serve_forever()
         except KeyboardInterrupt:

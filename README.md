@@ -1,34 +1,34 @@
-# Agent REPL
+# Spaghetti Agent
 
 **Give agents a runtime, not an ever-growing chat transcript.**
 
-Agent REPL is a durable, programmable runtime where people send ordinary
+Spaghetti Agent is a durable, programmable runtime where people send ordinary
 messages and agents pull context, coordinate work, and expose inspectable state.
 
-**[Install Agent REPL](#installation)** with Python 3.11+ and `pip`.
+**[Install Spaghetti Agent](#installation)** with Python 3.11+ and `pip`.
 
-## Why Agent REPL?
+## Why Spaghetti Agent?
 
 Chat is a useful interface, but a poor substitute for program state. Long-running
 agents need durable inboxes, explicit tasks, error history, context they can
 query, and a way to coordinate without flooding the user.
 
-Agent REPL gives the model a persistent Python environment for doing that work.
+Spaghetti Agent gives the model a persistent Python environment for doing that work.
 The user can keep sending messages while agents run, inspect state when desired,
 and review concise results instead of babysitting every model turn.
 
 ## Note: disclosures
 
-> **MVP status:** Agent REPL is experimental. Expect rough edges, especially
+> **MVP status:** Spaghetti Agent is experimental. Expect rough edges, especially
 > with free or small models.
 
-- Agent REPL runs locally with the permissions of its process. It is not an
+- Spaghetti Agent runs locally with the permissions of its process. It is not an
   operating-system sandbox.
 - Model providers receive the context sent to them. Raw model programs, HTTP
   traces, and runtime events may be retained locally for debugging.
 - Free inference can be slow, rate-limited, or unavailable.
 - The managed-project UI uses isolated project workspaces. It does not modify
-  the repository from which Agent REPL was launched.
+  the repository from which Spaghetti Agent was launched.
 - Standalone terminal mode intentionally uses the current directory as its
   workspace.
 
@@ -44,16 +44,16 @@ The core runtime provides:
 - provider fallback, token budgets, streaming, and diagnostic logs.
 
 Managed files, task branches, verification, and review are the first packaged
-application of this runtime. They are capabilities built on Agent REPL, not the
-definition of Agent REPL itself.
+application of this runtime. They are capabilities built on Spaghetti Agent,
+not the definition of Spaghetti Agent itself.
 
 ## Installation
 
 Requirements: Python 3.11 or newer, `pip`, and Git.
 
 ```text
-git clone https://github.com/plainIsaac/spaghetti-agent.git agent-repl
-cd agent-repl
+git clone https://github.com/plainIsaac/spaghetti-agent.git
+cd spaghetti-agent
 python -m venv .venv
 ```
 
@@ -70,7 +70,7 @@ source .venv/bin/activate
 .venv\Scripts\activate.bat
 ```
 
-Install Agent REPL using either standard package metadata or
+Install Spaghetti Agent using either standard package metadata or
 `requirements.txt`:
 
 ```text
@@ -81,8 +81,26 @@ python -m pip install -r requirements.txt
 python -m pip install --no-deps .
 ```
 
-The first form is recommended. Both install the `agent-repl` command into the
-active virtual environment.
+The first form is recommended. Both install the `spaghetti-agent` command into
+the active virtual environment. The legacy `agent-repl` command remains
+available as an alias.
+
+### Install as a global command
+
+Use [`pipx`](https://pipx.pypa.io/) to make `spaghetti-agent` available in
+every shell without installing its dependencies into your system Python:
+
+```text
+python -m pip install --user pipx
+python -m pipx ensurepath
+python -m pipx install .
+spaghetti-agent --help
+```
+
+Open a new terminal after `ensurepath` if the command is not found immediately.
+Run `python -m pipx upgrade spaghetti-agent` after pulling a newer version of
+the project. Use the virtual-environment installation above when developing or
+running the test suite.
 
 ## Usage example
 
@@ -95,7 +113,7 @@ OPENROUTER_API_KEY=your_key_here
 Start the managed-project application:
 
 ```text
-agent-repl --project-manager --openrouter --fallback-free --token-budget 20000
+spaghetti-agent --project-manager --openrouter --fallback-free --token-budget 20000
 ```
 
 Open the URL printed in the terminal, create a project, and send an ordinary
@@ -129,7 +147,7 @@ user message → coordinator task → delegated branch work → verification
 The project manager creates one runtime database and one workspace per project:
 
 ```text
-.agent-repl-projects/
+.spaghetti-agent-projects/
 ├── projects.sqlite
 └── project-1/
     ├── project.json
@@ -162,7 +180,7 @@ Useful runtime options:
 --no-subagents                  Disable dynamic agent creation
 ```
 
-Provider-reported usage is used when available; otherwise Agent REPL records a
+Provider-reported usage is used when available; otherwise Spaghetti Agent records a
 conservative token estimate.
 
 ## Project usage details
@@ -170,7 +188,7 @@ conservative token estimate.
 ### Managed-project browser UI
 
 ```text
-agent-repl --project-manager --openrouter
+spaghetti-agent --project-manager --openrouter
 ```
 
 Use this mode for independent managed workspaces, durable multi-agent tasks,
@@ -179,7 +197,7 @@ branch verification, diff review, and explicit merge control.
 ### Standalone terminal UI
 
 ```text
-agent-repl --openrouter
+spaghetti-agent --openrouter
 ```
 
 This mode operates in the current directory. Normal input becomes a user
@@ -198,10 +216,10 @@ message. Debug commands include:
 
 Provider failures, exhausted budgets, agent errors, and incomplete tasks remain
 durable. After correcting the provider policy or budget, use **Resume pending
-work** in the browser UI. Agent REPL resumes existing work instead of silently
-creating replacement tasks.
+work** in the browser UI. Spaghetti Agent resumes existing work instead of
+silently creating replacement tasks.
 
-## What Agent REPL is not
+## What Spaghetti Agent is not
 
 - It is not a hosted agent service.
 - It is not an OS sandbox, container manager, or permissions system.
