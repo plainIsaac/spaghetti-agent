@@ -6,6 +6,7 @@ import tempfile
 import threading
 import time
 import unittest
+import sys
 
 from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, SingleAgentSession, Supervisor
 from agent_repl.workspace import Workspace
@@ -127,6 +128,19 @@ class RuntimeSpikeTests(unittest.TestCase):
                     workspace.write_text("builder", 1, "app.txt", "second", "stale")
                 with self.assertRaisesRegex(RuntimeError, "claimed"):
                     workspace.claim("reviewer", 2, "app.txt")
+            finally:
+                workspace.close()
+
+    def test_workspace_runs_bounded_verification_and_records_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            try:
+                result = workspace.run("builder", 1, [sys.executable, "-c", "print('verified')"])
+                self.assertEqual(result["exit_code"], 0)
+                self.assertIn("verified", result["output"])
+                self.assertEqual(workspace.command_runs()[0]["task_id"], 1)
+                with self.assertRaisesRegex(ValueError, "argument list"):
+                    workspace.run("builder", 1, "python test.py")
             finally:
                 workspace.close()
 

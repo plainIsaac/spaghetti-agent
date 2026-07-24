@@ -316,6 +316,12 @@ class Workspace:
     def merge(self, task_id: Any) -> dict[str, Any]:
         return self._call_supervisor("workspace.merge", {"task_id": task_id})
 
+    def run(self, command: list[str], task_id: Any = None, timeout_seconds: int = 30) -> dict[str, Any]:
+        return self._call_supervisor("workspace.run", {"task_id": task_id, "command": command, "timeout_seconds": timeout_seconds})
+
+    def command_runs(self, task_id: Any = None) -> list[dict[str, Any]]:
+        return self._call_supervisor("workspace.command_runs", {"task_id": task_id})
+
 
 class ContextTasks:
     def __init__(self, call_supervisor: Callable[[str, dict[str, Any]], Any]) -> None:

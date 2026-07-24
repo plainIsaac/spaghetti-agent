@@ -37,6 +37,7 @@ def project_view(session: Any) -> dict[str, Any]:
             "agents": snapshot["agents"],
             "tasks": snapshot["active_tasks"],
             "branches": branches,
+            "verification": session.supervisor.workspace.command_runs(),
             "errors": snapshot["recent_errors"],
             "conversation": [
                 {"id": message.id, "sender": message.sender, "recipient": message.recipient, "text": message.text, "created_at": message.created_at.isoformat()}

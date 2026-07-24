@@ -376,6 +376,14 @@ class Supervisor:
             return self.workspace.submit(agent, task_id)
         if kind == "workspace.merge":
             return self.workspace.merge(_task_id(payload["task_id"]))
+        if kind == "workspace.run":
+            task_id = self._workspace_task_id(agent, payload.get("task_id"))
+            task = self.tasks.get(task_id)
+            if task is None or task.owner != agent or task.state != "working":
+                raise RuntimeError("workspace commands require an active task owned by this agent")
+            return self.workspace.run(agent, task_id, payload["command"], int(payload.get("timeout_seconds", 30)))
+        if kind == "workspace.command_runs":
+            return self.workspace.command_runs(payload.get("task_id"))
         if kind == "working_context.set":
             return self.working_context.set(agent, str(payload["key"]), payload["value"], str(payload.get("lifetime", "session")), str(payload.get("scope_id", "")), bool(payload.get("model_visible", False)))
         if kind == "working_context.get":

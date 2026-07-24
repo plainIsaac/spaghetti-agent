@@ -7,7 +7,9 @@ from difflib import unified_diff
 from hashlib import sha256
 from pathlib import Path
 import os
+import json
 import sqlite3
+import subprocess
 from tempfile import NamedTemporaryFile
 from threading import RLock
 
@@ -36,8 +38,41 @@ class Workspace:
         self._connection.execute("""CREATE TABLE IF NOT EXISTS static_workspace_watcher_deliveries (
             watcher_id INTEGER NOT NULL, path TEXT NOT NULL, revision TEXT NOT NULL, delivered_at TEXT NOT NULL,
             PRIMARY KEY(watcher_id, path, revision))""")
+        self._connection.execute("""CREATE TABLE IF NOT EXISTS workspace_command_runs (
+            id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, agent TEXT NOT NULL, command_json TEXT NOT NULL,
+            exit_code INTEGER, output TEXT NOT NULL, timed_out INTEGER NOT NULL, created_at TEXT NOT NULL)""")
         self._connection.commit()
         self._write_observer = None
+
+    def run(self, agent: str, task_id: int, command: list[str], timeout_seconds: int = 30) -> dict[str, object]:
+        """Run a bounded argv command in the workspace and retain its result."""
+        if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+            raise ValueError("workspace.run expects a non-empty argument list, not a shell string")
+        if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 60:
+            raise ValueError("workspace.run timeout_seconds must be between 1 and 60")
+        try:
+            completed = subprocess.run(command, cwd=self.root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout_seconds, shell=False)
+            exit_code, output, timed_out = completed.returncode, completed.stdout[-16_000:], False
+        except subprocess.TimeoutExpired as error:
+            captured = error.stdout or ""
+            if isinstance(captured, bytes):
+                captured = captured.decode(errors="replace")
+            exit_code, output, timed_out = None, (str(captured) + "\nTimed out.")[-16_000:], True
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "INSERT INTO workspace_command_runs(task_id,agent,command_json,exit_code,output,timed_out,created_at) VALUES(?,?,?,?,?,?,?)",
+                (task_id, agent, json.dumps(command), exit_code, output, int(timed_out), datetime.now(UTC).isoformat()),
+            )
+        return {"id": int(cursor.lastrowid), "command": command, "exit_code": exit_code, "output": output, "timed_out": timed_out}
+
+    def command_runs(self, task_id: int | None = None) -> list[dict[str, object]]:
+        query = "SELECT id,task_id,agent,command_json,exit_code,output,timed_out,created_at FROM workspace_command_runs"
+        values: tuple[object, ...] = () if task_id is None else (task_id,)
+        if task_id is not None:
+            query += " WHERE task_id=?"
+        with self._lock:
+            rows = self._connection.execute(query + " ORDER BY id DESC LIMIT 20", values).fetchall()
+        return [{"id": row[0], "task_id": row[1], "agent": row[2], "command": json.loads(row[3]), "exit_code": row[4], "output": row[5], "timed_out": bool(row[6]), "created_at": row[7]} for row in rows]
 
     def set_write_observer(self, observer) -> None:
         self._write_observer = observer
