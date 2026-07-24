@@ -1,0 +1,4 @@
+{"event": "message", "id": 1, "sender": "user", "recipient": "agent", "text": "Draft a short status update.", "created_at": "2026-07-24T19:15:27.532695+00:00"}
+{"event": "message", "id": 2, "sender": "agent", "recipient": "user", "text": "Received your message and recorded it in observable state.", "created_at": "2026-07-24T19:15:27.833258+00:00"}
+{"event": "message", "id": 3, "sender": "user", "recipient": "agent", "text": "Second request after restart.", "created_at": "2026-07-24T19:15:28.033094+00:00"}
+{"event": "message", "id": 4, "sender": "agent", "recipient": "user", "text": "Received your message and recorded it in observable state.", "created_at": "2026-07-24T19:15:28.556802+00:00"}

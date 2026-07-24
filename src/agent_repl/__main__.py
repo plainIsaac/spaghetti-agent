@@ -224,6 +224,8 @@ def main() -> None:
         finally:
             ui.server.server_close(); manager.close()
         return
+    if multi_agent and model_driver is None:
+        parser.error("The default coordinator runtime requires --openai or --openrouter; use --demo or --single-agent for local experiments")
     session = MultiAgentSession.open(str(arguments.data_dir), specialists=[]) if multi_agent else SingleAgentSession.open(
         str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
     )
@@ -237,8 +239,6 @@ def main() -> None:
         print(f"model> evaluation {result.status if result else 'skipped'}")
         print("you> ", end="", flush=True)
 
-    if multi_agent and model_driver is None:
-        parser.error("The default coordinator runtime requires --openai or --openrouter; use --demo or --single-agent for local experiments")
     if multi_agent and model_driver is not None:
         drivers = {agent: model_driver.clone() for agent in session.agents}
         for driver in drivers.values():
@@ -251,7 +251,14 @@ def main() -> None:
     else:
         worker = ModelTurnWorker(session, model_driver, render_completion, default_context_window=arguments.default_context_window) if model_driver is not None else None
     if arguments.web:
-        ui = LocalProjectUI(session, port=arguments.web_port)
+        def trigger_web_turn() -> None:
+            if arguments.demo:
+                session.run_demo_turn()
+                return
+            if worker is not None:
+                worker.request_turn()
+
+        ui = LocalProjectUI(session, port=arguments.web_port, on_message=trigger_web_turn)
         print(f"Spaghetti Agent web UI: {ui.url}")
         try:
             ui.server.serve_forever()

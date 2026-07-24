@@ -10,6 +10,41 @@ from agent_repl.__main__ import main
 
 
 class EntryPointTests(unittest.TestCase):
+    class _DummyServer:
+        def __init__(self, interrupt: bool = True) -> None:
+            self._interrupt = interrupt
+            self.closed = False
+
+        def serve_forever(self) -> None:
+            if self._interrupt:
+                raise KeyboardInterrupt
+
+        def server_close(self) -> None:
+            self.closed = True
+
+    class _DummyLocalProjectUI:
+        instances: list["EntryPointTests._DummyLocalProjectUI"] = []
+
+        def __init__(self, session, host: str = "127.0.0.1", port: int = 0, on_message=None) -> None:
+            self.session = session
+            self.host = host
+            self.port = port
+            self.on_message = on_message
+            self.url = f"http://{host}:{port or 8765}"
+            self.server = EntryPointTests._DummyServer()
+            type(self).instances.append(self)
+
+    class _DummyLocalProjectManagerUI:
+        instances: list["EntryPointTests._DummyLocalProjectManagerUI"] = []
+
+        def __init__(self, manager, host: str = "127.0.0.1", port: int = 0) -> None:
+            self.manager = manager
+            self.host = host
+            self.port = port
+            self.url = f"http://{host}:{port or 8765}"
+            self.server = EntryPointTests._DummyServer()
+            type(self).instances.append(self)
+
     def test_default_presentation_renders_state_only_on_revision_change(self) -> None:
         from agent_repl.__main__ import _render_default_presentation
         from agent_repl import SingleAgentSession
@@ -81,6 +116,63 @@ class EntryPointTests(unittest.TestCase):
                 main()
 
         self.assertIn("Shutting down Spaghetti Agent.", output.getvalue())
+
+    def test_demo_web_mode_starts_ui_and_wires_demo_message_handler(self) -> None:
+        output = StringIO()
+        self._DummyLocalProjectUI.instances.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["spaghetti-agent", "--demo", "--web", "--web-port", "9999", "--data-dir", str(Path(directory))]), patch(
+                "agent_repl.__main__.LocalProjectUI", self._DummyLocalProjectUI
+            ), patch("sys.stdout", output):
+                main()
+
+        self.assertIn("Spaghetti Agent web UI: http://127.0.0.1:9999", output.getvalue())
+        self.assertEqual(len(self._DummyLocalProjectUI.instances), 1)
+        self.assertIsNotNone(self._DummyLocalProjectUI.instances[0].on_message)
+        self.assertTrue(self._DummyLocalProjectUI.instances[0].server.closed)
+
+    def test_project_manager_mode_starts_ui_and_shuts_down_cleanly(self) -> None:
+        output = StringIO()
+        self._DummyLocalProjectManagerUI.instances.clear()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "sys.argv",
+                [
+                    "spaghetti-agent",
+                    "--project-manager",
+                    "--openai",
+                    "--web-port",
+                    "9998",
+                    "--data-dir",
+                    str(Path(directory) / "session"),
+                    "--projects-dir",
+                    str(Path(directory) / "projects"),
+                ],
+            ), patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=True), patch(
+                "agent_repl.__main__.LocalProjectManagerUI", self._DummyLocalProjectManagerUI
+            ), patch("sys.stdout", output):
+                main()
+
+        self.assertIn("Spaghetti Agent project manager: http://127.0.0.1:9998", output.getvalue())
+        self.assertEqual(len(self._DummyLocalProjectManagerUI.instances), 1)
+        self.assertTrue(self._DummyLocalProjectManagerUI.instances[0].server.closed)
+
+    def test_default_coordinator_runtime_requires_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["spaghetti-agent", "--data-dir", str(Path(directory))]), self.assertRaises(SystemExit) as error:
+                main()
+
+        self.assertEqual(error.exception.code, 2)
+
+    def test_project_manager_requires_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "sys.argv",
+                ["spaghetti-agent", "--project-manager", "--projects-dir", str(Path(directory) / "projects"), "--data-dir", str(Path(directory) / "session")],
+            ), self.assertRaises(SystemExit) as error:
+                main()
+
+        self.assertEqual(error.exception.code, 2)
 
 
 if __name__ == "__main__":

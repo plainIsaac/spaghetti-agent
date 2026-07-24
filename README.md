@@ -249,10 +249,13 @@ python -m pip install --editable ".[dev]"
 
 The `--editable` installation keeps the `spaghetti-agent` command linked to
 this checkout, so Python source changes take effect without reinstalling the
-package. Run the test suite with:
+package. Run the full test suite with either:
 
 ```text
 python -m pytest -q
+
+# Or without the optional pytest dependency:
+python -m unittest discover -s tests -q
 ```
 
 The test suite covers inbox durability, persistent kernels, context retrieval,

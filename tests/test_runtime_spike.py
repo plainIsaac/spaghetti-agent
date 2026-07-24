@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import sqlite3
 import tempfile
 import threading
 import time
@@ -147,6 +148,27 @@ class RuntimeSpikeTests(unittest.TestCase):
             self.assertIn("Spaghetti Agent", urlopen(ui.url, timeout=2).read().decode())
         finally:
             ui.shutdown()
+
+    def test_local_web_ui_can_process_demo_messages(self) -> None:
+        from urllib.request import Request, urlopen
+
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        ui = LocalProjectUI(session, on_message=session.run_demo_turn).start()
+        try:
+            request = Request(
+                ui.url + "/api/messages",
+                data=b'{"text":"Process this in demo mode."}',
+                headers={"content-type": "application/json"},
+                method="POST",
+            )
+            self.assertEqual(urlopen(request, timeout=2).status, 202)
+            deadline = time.monotonic() + 2
+            while not session.user_messages() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(session.user_messages()[0].text, "Received your message and recorded it in observable state.")
+        finally:
+            ui.shutdown()
     def test_managed_workspace_claims_writes_and_rejects_stale_revisions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Workspace(directory)
@@ -184,6 +206,28 @@ class RuntimeSpikeTests(unittest.TestCase):
                 workspace.branch("builder", 1)
                 workspace.write_text("builder", 1, "index.html", "<main>branch</main>")
                 result = workspace.run("builder", 1, [sys.executable, "-c", "from pathlib import Path; assert '<main>' in Path('index.html').read_text()"])
+                self.assertEqual(result["exit_code"], 0)
+            finally:
+                workspace.close()
+
+    def test_workspace_branch_verification_reuses_main_workspace_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Workspace(directory)
+            try:
+                Path(directory, "config.json").write_text('{"mode":"main"}', encoding="utf-8")
+                workspace.branch("builder", 1)
+                workspace.write_text("builder", 1, "index.html", "<main>branch</main>")
+                result = workspace.run(
+                    "builder",
+                    1,
+                    [
+                        sys.executable,
+                        "-c",
+                        "from pathlib import Path; "
+                        "assert Path('config.json').read_text() == '{\"mode\":\"main\"}'; "
+                        "assert Path('index.html').read_text() == '<main>branch</main>'",
+                    ],
+                )
                 self.assertEqual(result["exit_code"], 0)
             finally:
                 workspace.close()
@@ -515,6 +559,16 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.addCleanup(restored.close)
         self.assertEqual(restored.pending("agent"), [message])
         self.assertEqual(restored.event_kinds(), ["inbox.message_added"])
+
+    def test_supervisor_close_releases_its_owned_token_budget(self) -> None:
+        journal = InboxJournal()
+        self.addCleanup(journal.close)
+        supervisor = Supervisor(journal)
+
+        supervisor.close()
+
+        with self.assertRaises(sqlite3.ProgrammingError):
+            supervisor.token_budget.snapshot()
 
     def test_delivery_is_scheduled_after_append_not_run_reentrantly(self) -> None:
         journal = InboxJournal()

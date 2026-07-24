@@ -10,6 +10,8 @@ import os
 import json
 import sqlite3
 import subprocess
+import stat
+from contextlib import nullcontext
 from tempfile import NamedTemporaryFile
 from tempfile import TemporaryDirectory
 import shutil
@@ -52,17 +54,18 @@ class Workspace:
             raise ValueError("workspace.run expects a non-empty argument list, not a shell string")
         if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 60:
             raise ValueError("workspace.run timeout_seconds must be between 1 and 60")
-        with TemporaryDirectory(prefix="spaghetti-agent-verify-") as temporary_root:
-            execution_root = Path(temporary_root)
-            if self.root.exists():
-                shutil.copytree(self.root, execution_root, dirs_exist_ok=True)
-            if self._is_branch(task_id):
-                for change in self._connection.execute("SELECT path,text FROM workspace_branch_files WHERE task_id=?", (task_id,)):
-                    target = execution_root / str(change[0])
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(str(change[1]), encoding="utf-8")
+        root_context = self._execution_root(task_id)
+        with root_context as execution_root:
             try:
-                completed = subprocess.run(command, cwd=execution_root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout_seconds, shell=False)
+                completed = subprocess.run(
+                    command,
+                    cwd=execution_root,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    timeout=timeout_seconds,
+                    shell=False,
+                )
                 exit_code, output, timed_out = completed.returncode, completed.stdout[-16_000:], False
             except subprocess.TimeoutExpired as error:
                 captured = error.stdout or ""
@@ -294,6 +297,11 @@ class Workspace:
     def close(self) -> None:
         self._connection.close()
 
+    def _execution_root(self, task_id: int):
+        if not self._is_branch(task_id):
+            return nullcontext(self.root)
+        return _BranchExecutionRoot(self, task_id)
+
     def _resolve(self, relative: str) -> Path:
         candidate = (self.root / relative).resolve()
         if candidate != self.root and self.root not in candidate.parents:
@@ -310,3 +318,65 @@ class Workspace:
     @staticmethod
     def _revision(text: str) -> str:
         return sha256(text.encode("utf-8")).hexdigest()
+
+
+class _BranchExecutionRoot:
+    """Materialize a branch view without copying the workspace file contents."""
+
+    def __init__(self, workspace: Workspace, task_id: int) -> None:
+        self._workspace = workspace
+        self._task_id = task_id
+        self._temporary_root: TemporaryDirectory[str] | None = None
+        self._path: Path | None = None
+
+    def __fspath__(self) -> str:
+        return str(self.path)
+
+    @property
+    def path(self) -> Path:
+        if self._path is None:
+            self._temporary_root = TemporaryDirectory(prefix="spaghetti-agent-verify-")
+            self._path = Path(self._temporary_root.name)
+            self._mirror_workspace()
+            self._overlay_branch_files()
+        return self._path
+
+    def __enter__(self) -> Path:
+        return self.path
+
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
+        if self._temporary_root is not None:
+            self._temporary_root.cleanup()
+            self._temporary_root = None
+            self._path = None
+
+    def _mirror_workspace(self) -> None:
+        if not self._workspace.root.exists():
+            return
+        for source in self._workspace.root.rglob("*"):
+            relative = source.relative_to(self._workspace.root)
+            target = self.path / relative
+            if source.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            self._link_or_copy_file(source, target)
+
+    def _overlay_branch_files(self) -> None:
+        for relative, text in self._workspace._connection.execute(
+            "SELECT path,text FROM workspace_branch_files WHERE task_id=?",
+            (self._task_id,),
+        ):
+            target = self.path / str(relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(text), encoding="utf-8")
+
+    @staticmethod
+    def _link_or_copy_file(source: Path, target: Path) -> None:
+        try:
+            os.link(source, target)
+        except OSError:
+            if target.exists():
+                target.chmod(stat.S_IWRITE)
+                target.unlink()
+            shutil.copy2(source, target)

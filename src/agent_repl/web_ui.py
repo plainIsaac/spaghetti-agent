@@ -6,7 +6,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from threading import Thread
-from typing import Any
+from typing import Any, Callable
 
 from .ui import project_index, project_view
 
@@ -25,7 +25,7 @@ _PROJECT_PAGE = """<!doctype html><meta charset=utf-8><title>Spaghetti Agent Pro
 <script>async function refresh(){let x=await(await fetch('/api/projects')).json();document.querySelector('#projects').innerHTML=x.projects.map(p=>`<div class=card><b>${p.name}</b> · ${p.state}${p.runtime_initialized?' · initialized':''}${p.state==='active'?` <button onclick="openProject(${p.id})">Open</button> <button onclick="closeProject(${p.id})">Close runtime</button> <button onclick="archive(${p.id})">Archive</button>`:''}</div>`).join('')||'<p>No projects yet.</p>'}async function openProject(id){let x=await(await fetch('/api/projects/'+id+'/open',{method:'POST'})).json();location.href=x.url}async function closeProject(id){await fetch('/api/projects/'+id+'/close',{method:'POST'});refresh()}async function archive(id){await fetch('/api/projects/'+id+'/archive',{method:'POST'});refresh()}document.querySelector('#create').onsubmit=async e=>{e.preventDefault();let name=new FormData(e.target).get('name').trim();if(!name)return;await fetch('/api/projects',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name})});e.target.reset();refresh()};refresh()</script>"""
 
 
-def make_handler(session: Any):
+def make_handler(session: Any, on_message: Callable[[], None] | None = None):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path == "/":
@@ -59,6 +59,8 @@ def make_handler(session: Any):
             except (ValueError, KeyError, json.JSONDecodeError) as error:
                 self._send(HTTPStatus.BAD_REQUEST, "application/json", json.dumps({"error": str(error)}).encode()); return
             message = session.send(text)
+            if on_message is not None:
+                on_message()
             self._send(HTTPStatus.ACCEPTED, "application/json", json.dumps({"id": message.id}).encode())
 
         def _send(self, status: HTTPStatus, content_type: str, body: bytes) -> None:
@@ -170,16 +172,21 @@ class LocalProjectManagerUI:
             self.close_project(project_id)
 
 
-def serve(session: Any, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+def serve(
+    session: Any,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    on_message: Callable[[], None] | None = None,
+) -> ThreadingHTTPServer:
     """Create a local-only project UI server; caller owns serve_forever/close."""
-    return ThreadingHTTPServer((host, port), make_handler(session))
+    return ThreadingHTTPServer((host, port), make_handler(session, on_message))
 
 
 class LocalProjectUI:
     """Managed local server lifecycle, suitable for tests and embedded hosts."""
 
-    def __init__(self, session: Any, host: str = "127.0.0.1", port: int = 0) -> None:
-        self.server = serve(session, host, port)
+    def __init__(self, session: Any, host: str = "127.0.0.1", port: int = 0, on_message: Callable[[], None] | None = None) -> None:
+        self.server = serve(session, host, port, on_message)
         self._thread: Thread | None = None
 
     @property

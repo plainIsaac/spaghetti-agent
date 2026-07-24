@@ -610,3 +610,5 @@ class Supervisor:
             self.working_context.close()
         if self._owns_workspace:
             self.workspace.close()
+        if self._owns_token_budget:
+            self.token_budget.close()
