@@ -62,6 +62,26 @@ class EntryPointTests(unittest.TestCase):
 
         self.assertIn("Model setup required: Set OPENAI_API_KEY", output.getvalue())
 
+    def test_ctrl_c_gracefully_shuts_down_terminal_mode(self) -> None:
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["spaghetti-agent", "--demo", "--data-dir", str(Path(directory))]), patch(
+                "builtins.input", side_effect=KeyboardInterrupt
+            ), patch("sys.stdout", output):
+                main()
+
+        self.assertIn("Shutting down Spaghetti Agent.", output.getvalue())
+
+    def test_closed_stdin_gracefully_shuts_down_terminal_mode(self) -> None:
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["spaghetti-agent", "--demo", "--data-dir", str(Path(directory))]), patch(
+                "builtins.input", side_effect=EOFError
+            ), patch("sys.stdout", output):
+                main()
+
+        self.assertIn("Shutting down Spaghetti Agent.", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

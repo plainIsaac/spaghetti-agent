@@ -64,6 +64,10 @@ def _print_help() -> None:
     print("Type a normal message for the agent. :agents shows workers and tasks; :state, :python, :log, :model-log, :repl-log, and :http-log are debug controls.")
 
 
+def _announce_shutdown() -> None:
+    print("\nShutting down Spaghetti Agent.")
+
+
 def _print_agents(session) -> None:
     if isinstance(session, MultiAgentSession):
         statuses = session.agent_status()
@@ -216,7 +220,7 @@ def main() -> None:
         try:
             ui.server.serve_forever()
         except KeyboardInterrupt:
-            pass
+            _announce_shutdown()
         finally:
             ui.server.server_close(); manager.close()
         return
@@ -252,7 +256,7 @@ def main() -> None:
         try:
             ui.server.serve_forever()
         except KeyboardInterrupt:
-            pass
+            _announce_shutdown()
         finally:
             ui.server.server_close()
             if worker is not None:
@@ -342,6 +346,8 @@ def main() -> None:
                         pass
                 except OpenAIConfigurationError as error:
                     print(f"Model setup required: {error}")
+    except (KeyboardInterrupt, EOFError):
+        _announce_shutdown()
     finally:
         if worker is not None:
             worker.close()
