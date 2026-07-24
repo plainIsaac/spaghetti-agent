@@ -10,6 +10,7 @@ verification output, and diffs when needed.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[openai]"
+Copy-Item .env.example .env
 # Put OPENROUTER_API_KEY=... in .env
 agent-repl --project-manager --openrouter --fallback-free --token-budget 10000
 ```
