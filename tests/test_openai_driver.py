@@ -112,6 +112,20 @@ class DelayedStreamClient:
 
 
 class OpenAIDriverTests(unittest.TestCase):
+    def test_worker_close_closes_an_active_provider_client(self) -> None:
+        session = SingleAgentSession.open()
+        self.addCleanup(session.close)
+        client = ClosableSlowClient()
+        worker = ModelTurnWorker(session, OpenAIAgentDriver(client=client, request_timeout=1.0))
+        self.addCleanup(worker.close)
+        session.send("Stop this request when the session closes.")
+
+        self.assertTrue(worker.request_turn())
+        sleep(0.01)
+        worker.close()
+
+        self.assertTrue(client.closed)
+
     def test_default_model_is_the_cost_sensitive_experiment_tier(self) -> None:
         self.assertEqual(DEFAULT_OPENAI_MODEL, "gpt-5.6-luna")
         self.assertEqual(DEFAULT_REQUEST_TIMEOUT_SECONDS, 30.0)

@@ -241,6 +241,14 @@ class OpenAICompatibleAgentDriver:
         """Enable a local, redacted provider HTTP trace for debugging."""
         self._http_log_path = Path(path)
 
+    def close(self) -> None:
+        """Close an in-flight or cached provider client during shutdown."""
+        with self._client_lock:
+            client, self._client = self._client, None
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+
     def clone(self) -> "OpenAICompatibleAgentDriver":
         clone = type(self)(self.model, request_timeout=self.request_timeout)
         clone.output_token_reserve = self.output_token_reserve
@@ -558,6 +566,10 @@ class FallbackAgentDriver:
     def set_http_log_path(self, path: str) -> None:
         for driver in self.drivers:
             driver.set_http_log_path(path)
+
+    def close(self) -> None:
+        for driver in self.drivers:
+            driver.close()
 
     def clone(self) -> "FallbackAgentDriver":
         return FallbackAgentDriver([driver.clone() for driver in self.drivers])

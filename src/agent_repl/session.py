@@ -260,6 +260,9 @@ class ModelTurnWorker:
     def close(self) -> None:
         self._wake_stop.set()
         self._wake_thread.join(timeout=1)
+        close = getattr(self.driver, "close", None)
+        if callable(close):
+            close()
         self._executor.shutdown(wait=False, cancel_futures=False)
 
 

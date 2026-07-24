@@ -10,3 +10,4 @@ build/
 .agent-repl-*/
 .spaghetti-agent/
 .spaghetti-agent-projects/
+.local-live-tests/
