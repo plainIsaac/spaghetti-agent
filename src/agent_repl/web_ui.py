@@ -16,7 +16,7 @@ _PAGE = """<!doctype html><meta charset=utf-8><title>Agent REPL</title>
 <main><h1>Project</h1><section id=replies></section><form id=send><textarea name=text placeholder="Message the project agent…"></textarea><br><button>Send</button></form><details open><summary>Inference</summary><section id=inference></section></details><details open><summary>Work status</summary><section id=agents></section><section id=tasks></section></details><details open><summary>Submitted branches</summary><section id=branches></section></details><details><summary>Inspect work</summary><pre id=inspection></pre></details></main>
 <script>const replies=document.querySelector('#replies'),inspection=document.querySelector('#inspection');
 async function merge(id){let r=await fetch('/api/branches/'+id+'/merge',{method:'POST'});if(!r.ok)alert((await r.json()).error);refresh()}
-async function refresh(){let view=await (await fetch('/api/view')).json(),work=view.inspection,inf=view.default.inference;replies.innerHTML=view.default.replies.map(r=>`<div class=reply><small>${r.sender}</small><br>${r.text}</div>`).join('')||'<p>No replies yet.</p>';document.querySelector('#inference').innerHTML=`<div class=reply><b>${inf.status}</b> · ${inf.used_tokens} used${inf.reserved_tokens?' · '+inf.reserved_tokens+' reserved':''}${inf.remaining_tokens!==null?' · '+inf.remaining_tokens+' remaining':''}<br><small>${inf.last_turn_accounting||inf.method}</small></div>`;document.querySelector('#agents').innerHTML=work.agents.map(a=>`<div class=reply><b>${a.name}</b> · ${a.role} · ${a.phase}${a.pending_messages?' · '+a.pending_messages+' pending':''}</div>`).join('')||'<p>No active agents.</p>';document.querySelector('#tasks').innerHTML=work.tasks.map(t=>`<div class=reply>Task #${t.id} · ${t.owner} · ${t.state}<br>${t.title}</div>`).join('')||'<p>No active tasks.</p>';let branches=work.branches.filter(b=>b.state==='submitted');document.querySelector('#branches').innerHTML=branches.map(b=>`<div class=reply><b>Task #${b.task_id}</b> — ${b.agent}, ${b.files} file(s)<pre>${b.diff||'No changed files'}</pre><button onclick="merge(${b.task_id})">Merge reviewed branch</button></div>`).join('')||'<p>No submitted branches.</p>';inspection.textContent=JSON.stringify({state:view.default.state,inference:inf,...work},null,2)}
+async function refresh(){let view=await (await fetch('/api/view')).json(),work=view.inspection,inf=view.default.inference,p=inf.provider;replies.innerHTML=view.default.replies.map(r=>`<div class=reply><small>${r.sender}</small><br>${r.text}</div>`).join('')||'<p>No replies yet.</p>';document.querySelector('#inference').innerHTML=`<div class=reply><b>${p?p.provider:'No provider turn yet'}</b>${p?' · '+p.model:''}<br><b>${inf.status}</b> · ${inf.used_tokens} used${inf.reserved_tokens?' · '+inf.reserved_tokens+' reserved':''}${inf.remaining_tokens!==null?' · '+inf.remaining_tokens+' remaining':''}<br><small>${p&&p.fallback_failures&&p.fallback_failures.length?'Fallback: '+p.fallback_failures.map(x=>x.provider).join(', '):inf.last_turn_accounting||inf.method}</small></div>`;document.querySelector('#agents').innerHTML=work.agents.map(a=>`<div class=reply><b>${a.name}</b> · ${a.role} · ${a.phase}${a.pending_messages?' · '+a.pending_messages+' pending':''}</div>`).join('')||'<p>No active agents.</p>';document.querySelector('#tasks').innerHTML=work.tasks.map(t=>`<div class=reply>Task #${t.id} · ${t.owner} · ${t.state}<br>${t.title}</div>`).join('')||'<p>No active tasks.</p>';let branches=work.branches.filter(b=>b.state==='submitted');document.querySelector('#branches').innerHTML=branches.map(b=>`<div class=reply><b>Task #${b.task_id}</b> — ${b.agent}, ${b.files} file(s)<pre>${b.diff||'No changed files'}</pre><button onclick="merge(${b.task_id})">Merge reviewed branch</button></div>`).join('')||'<p>No submitted branches.</p>';inspection.textContent=JSON.stringify({state:view.default.state,inference:inf,...work},null,2)}
 document.querySelector('#send').onsubmit=async e=>{e.preventDefault();let text=new FormData(e.target).get('text').trim();if(!text)return;await fetch('/api/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})});e.target.reset();refresh()};refresh();setInterval(refresh,1500);</script>"""
 
 _PROJECT_PAGE = """<!doctype html><meta charset=utf-8><title>Agent REPL Projects</title>
@@ -66,7 +66,7 @@ def make_handler(session: Any):
     return Handler
 
 
-def make_project_manager_handler(manager: Any, open_project: Any = None, close_project: Any = None):
+def make_project_manager_handler(manager: Any, open_project: Any = None, close_project: Any = None, restart_project: Any = None):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path == "/":
@@ -97,7 +97,9 @@ def make_project_manager_handler(manager: Any, open_project: Any = None, close_p
                     self._send(HTTPStatus.OK, {"id": project.id, "state": project.state}); return
                 if self.path.startswith("/api/projects/") and self.path.endswith("/inference-policy"):
                     project_id = int(self.path.split("/")[3])
-                    self._send(HTTPStatus.OK, {"id": project_id, "inference_policy": manager.set_inference_policy(project_id, self._json_body())}); return
+                    policy = manager.set_inference_policy(project_id, self._json_body())
+                    restarted = bool(restart_project(project_id)) if restart_project is not None and manager.is_open(project_id) else False
+                    self._send(HTTPStatus.OK, {"id": project_id, "inference_policy": policy, "restarted": restarted}); return
             except (ValueError, KeyError) as error:
                 self._send(HTTPStatus.BAD_REQUEST, {"error": str(error)}); return
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -119,7 +121,7 @@ class LocalProjectManagerUI:
     def __init__(self, manager: Any, host: str = "127.0.0.1", port: int = 0) -> None:
         self.manager, self.host = manager, host
         self._projects: dict[int, LocalProjectUI] = {}
-        self.server = ThreadingHTTPServer((host, port), make_project_manager_handler(manager, self.open_project, self.close_project))
+        self.server = ThreadingHTTPServer((host, port), make_project_manager_handler(manager, self.open_project, self.close_project, self.restart_project))
         self._thread: Thread | None = None
 
     @property
@@ -147,6 +149,13 @@ class LocalProjectManagerUI:
         if ui is None:
             return False
         ui.shutdown(); self.manager.close_project(project_id)
+        return True
+
+    def restart_project(self, project_id: int) -> bool:
+        if project_id not in self._projects:
+            return False
+        self.close_project(project_id)
+        self.open_project(project_id)
         return True
 
     def shutdown(self) -> None:

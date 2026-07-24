@@ -12,6 +12,7 @@ from .openai_driver import (
     GroqAgentDriver,
     GeminiAgentDriver,
     FallbackAgentDriver,
+    driver_from_policy,
     OpenRouterAgentDriver,
 )
 from .session import SingleAgentSession
@@ -37,6 +38,7 @@ __all__ = [
     "GroqAgentDriver",
     "GeminiAgentDriver",
     "FallbackAgentDriver",
+    "driver_from_policy",
     "OpenRouterAgentDriver",
     "PersistentKernel",
     "RestartReport",

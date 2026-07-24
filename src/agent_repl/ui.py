@@ -29,6 +29,8 @@ def project_view(session: Any) -> dict[str, Any]:
         branches.append(item)
     inference = snapshot.get("token_budget", session.supervisor.token_budget.snapshot())
     inference["policy"] = getattr(session, "inference_policy", {})
+    provider_state = session.supervisor.observable_state.get(session.agent, "provider")
+    inference["provider"] = None if provider_state is None else provider_state.value
     return {
         "default": {"replies": replies, "state": presentable, "inference": inference},
         "inspection": {

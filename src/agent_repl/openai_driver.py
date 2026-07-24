@@ -563,6 +563,26 @@ class FallbackAgentDriver:
         raise ProviderFallbackError(f"all configured providers failed: {details}")
 
 
+def driver_from_policy(specification: dict[str, Any], request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS) -> OpenAICompatibleAgentDriver:
+    """Construct a provider driver from the durable, user-editable policy form."""
+    provider = str(specification.get("provider", "")).strip().lower().replace(" ", "")
+    model = specification.get("model")
+    factories = {
+        "openai": (OpenAIAgentDriver, DEFAULT_OPENAI_MODEL),
+        "openrouter": (OpenRouterAgentDriver, DEFAULT_OPENROUTER_MODEL),
+        "groq": (GroqAgentDriver, DEFAULT_GROQ_MODEL),
+        "googlegemini": (GeminiAgentDriver, DEFAULT_GEMINI_MODEL),
+        "gemini": (GeminiAgentDriver, DEFAULT_GEMINI_MODEL),
+    }
+    try:
+        factory, default_model = factories[provider]
+    except KeyError as error:
+        raise ValueError(f"unknown inference provider: {specification.get('provider')!r}") from error
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise ValueError("provider model must be a non-empty string")
+    return factory(model or default_model, request_timeout=request_timeout)
+
+
 class OpenAIAgentController:
     """Connects durable runtime state to a single OpenAI-planned agent turn."""
 

@@ -115,6 +115,10 @@ class ProjectManager:
             raise ValueError("token_budget must be a positive integer or null")
         if "turn_token_reserve" in policy and (not isinstance(policy["turn_token_reserve"], int) or policy["turn_token_reserve"] < 0):
             raise ValueError("turn_token_reserve must be a non-negative integer")
+        if "providers" in policy:
+            providers = policy["providers"]
+            if not isinstance(providers, list) or not providers or not all(isinstance(item, dict) and isinstance(item.get("provider"), str) and item["provider"].strip() for item in providers):
+                raise ValueError("providers must be a non-empty list of provider/model objects")
         current = self.inference_policy(project_id)
         current.update(policy)
         path = self.root / f"project-{project_id}" / "project.json"

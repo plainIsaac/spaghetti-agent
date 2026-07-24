@@ -14,6 +14,7 @@ from .openai_driver import (
     GroqAgentDriver,
     GeminiAgentDriver,
     FallbackAgentDriver,
+    driver_from_policy,
     OpenAIAgentDriver,
     OpenAIConfigurationError,
     OpenRouterAgentDriver,
@@ -189,11 +190,17 @@ def main() -> None:
         def configure_project(session: MultiAgentSession) -> None:
             policy = session.inference_policy
             session.supervisor.token_budget.set_limit(policy.get("token_budget", arguments.token_budget))
-            drivers = {agent: model_driver.clone() for agent in session.agents}
+            provider_specs = policy.get("providers") or [{"provider": model_driver.provider_name, "model": model_driver.model}]
+            configured = [driver_from_policy(spec, arguments.request_timeout) for spec in provider_specs]
+            policy_driver = configured[0] if len(configured) == 1 else FallbackAgentDriver(configured)
+            drivers = {agent: policy_driver.clone() for agent in session.agents}
             for driver in drivers.values():
                 driver.output_token_reserve = policy.get("turn_token_reserve", arguments.turn_token_reserve)
             session.start_workers(drivers, arguments.default_context_window)
             session.supervisor.allow_subagents = not arguments.no_subagents
+        policy_providers = ([{"provider": driver.provider_name, "model": driver.model} for driver in model_driver.drivers]
+                            if isinstance(model_driver, FallbackAgentDriver)
+                            else [{"provider": model_driver.provider_name, "model": model_driver.model}])
         manager = ProjectManager(
             arguments.projects_dir,
             configure_session=configure_project,
@@ -201,7 +208,7 @@ def main() -> None:
                 "token_budget": arguments.token_budget,
                 "turn_token_reserve": arguments.turn_token_reserve,
                 "fallback_free": arguments.fallback_free,
-                "providers": [{"provider": model_driver.provider_name, "model": model_driver.model}],
+                "providers": policy_providers,
             },
         )
         ui = LocalProjectManagerUI(manager, port=arguments.web_port)
