@@ -301,6 +301,9 @@ class Workspace:
     def write_text(self, path: str, text: str, task_id: Any = None, expected_revision: str | None = None) -> dict[str, str]:
         return self._call_supervisor("workspace.write_text", {"task_id": task_id, "path": path, "text": text, "expected_revision": expected_revision})
 
+    def write_file(self, path: str, text: str, task_id: Any = None, expected_revision: str | None = None) -> dict[str, str]:
+        return self.write_text(path, text, task_id, expected_revision)
+
     def changes(self, task_id: Any = None) -> list[dict[str, Any]]:
         return self._call_supervisor("workspace.changes", {"task_id": task_id})
 
@@ -316,11 +319,21 @@ class Workspace:
     def merge(self, task_id: Any) -> dict[str, Any]:
         return self._call_supervisor("workspace.merge", {"task_id": task_id})
 
-    def run(self, command: list[str], task_id: Any = None, timeout_seconds: int = 30) -> dict[str, Any]:
-        return self._call_supervisor("workspace.run", {"task_id": task_id, "command": command, "timeout_seconds": timeout_seconds})
+    def run(self, command: list[str], task_id: Any = None, timeout_seconds: int = 30) -> "CommandResult":
+        return CommandResult(self._call_supervisor("workspace.run", {"task_id": task_id, "command": command, "timeout_seconds": timeout_seconds}))
 
     def command_runs(self, task_id: Any = None) -> list[dict[str, Any]]:
         return self._call_supervisor("workspace.command_runs", {"task_id": task_id})
+
+
+class CommandResult(dict[str, Any]):
+    @property
+    def stdout(self) -> str:
+        return str(self["output"])
+
+    @property
+    def returncode(self) -> int | None:
+        return self["exit_code"]
 
 
 class ContextTasks:

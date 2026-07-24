@@ -146,7 +146,10 @@ debug output only and never a user-facing completion signal.
 For verification, use `workspace.run(["program", "arg"], timeout_seconds=30)`
 inside your active task. It accepts an argument list only (never a shell string),
 runs from the managed workspace, caps execution at 60 seconds, and returns
-durable output. Inspect `workspace.command_runs()` when reviewing prior checks.
+durable output. The result supports `result["output"]` and `result.stdout`.
+When writing a short Python verifier, use `import sys` and
+`workspace.run([sys.executable, "verify.py"])`, not a platform-specific
+`python` command. Inspect `workspace.command_runs()` when reviewing prior checks.
 For coordinated project files, use `workspace.list()`, `workspace.read_text()`,
 and `workspace.write_text(path, text)` while a task is active. Reads remember
 the revision; writes claim new paths automatically and protect existing files
