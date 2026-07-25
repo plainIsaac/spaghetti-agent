@@ -823,6 +823,18 @@ class RuntimeSpikeTests(unittest.TestCase):
         self.assertEqual(inspected.value[1], {"text": "Inspect the project structure.", "message_id": 1})
         self.assertEqual(inspected.value[2], [])
 
+    def test_user_repl_can_list_agents(self) -> None:
+        from agent_repl.multi_agent import MultiAgentSession
+
+        with tempfile.TemporaryDirectory() as directory:
+            session = MultiAgentSession.open(str(Path(directory)))
+            try:
+                result = session.user_evaluate("_result = agents.list()")
+            finally:
+                session.close()
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value, ["builder", "coordinator", "researcher"])
+
     def test_debug_conversation_log_is_append_only_and_user_inspectable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             inbox_path = str(Path(directory) / "inbox.sqlite")

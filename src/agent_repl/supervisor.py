@@ -550,6 +550,8 @@ class Supervisor:
         return _task_id(value)
 
     def _handle_user_capability(self, user: str, agent: str, kind: str, payload: dict[str, Any]) -> Any:
+        if kind == "user.agents.list":
+            return sorted(name for name in self._repls if name != user)
         if kind == "presentable.list":
             return {value.name: value.value for value in self.observable_state.list(agent, default_only=True)}
         if kind == "presentable.get":

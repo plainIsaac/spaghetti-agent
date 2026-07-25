@@ -117,6 +117,30 @@ class EntryPointTests(unittest.TestCase):
 
         self.assertIn("Shutting down Spaghetti Agent.", output.getvalue())
 
+    def test_forced_tui_uses_alternate_screen_and_restores_it(self) -> None:
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["spaghetti-agent", "--demo", "--tui", "--data-dir", str(Path(directory))]), patch(
+                "builtins.input", side_effect=[":quit"]
+            ), patch("sys.stdout", output):
+                main()
+
+        rendered = output.getvalue()
+        self.assertIn("\x1b[?1049h", rendered)
+        self.assertIn("\x1b[?1049l", rendered)
+
+    def test_tui_python_inspection_returns_to_dashboard_without_crashing(self) -> None:
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("sys.argv", ["spaghetti-agent", "--demo", "--tui", "--data-dir", str(Path(directory))]), patch(
+                "builtins.input", side_effect=["/python", "presentable.list()", ":back", ":quit"]
+            ), patch("sys.stdout", output):
+                main()
+
+        self.assertIn("Python inspection mode", output.getvalue())
+        self.assertIn("runtime", output.getvalue())
+        self.assertNotIn("Traceback", output.getvalue())
+
     def test_demo_web_mode_starts_ui_and_wires_demo_message_handler(self) -> None:
         output = StringIO()
         self._DummyLocalProjectUI.instances.clear()

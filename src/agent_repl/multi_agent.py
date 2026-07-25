@@ -81,6 +81,10 @@ class MultiAgentSession:
             self._workers[self.coordinator].request_turn()
         return message
 
+    def user_evaluate(self, source: str, timeout: float = 2) -> KernelResult:
+        """Evaluate inspection code in the shared user kernel."""
+        return self.supervisor.agent_kernel("user").evaluate(source, timeout)
+
     @property
     def agent(self) -> str:
         return self.coordinator

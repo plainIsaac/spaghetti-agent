@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from pathlib import Path
 import shutil
 import sys
+import os
 
 from .openai_driver import (
     DEFAULT_OPENAI_MODEL,
@@ -72,6 +74,16 @@ def _announce_shutdown() -> None:
 _ESC = "\x1b["
 
 
+def _interactive_terminal() -> bool:
+    """Detect terminals wrapped by shells that do not expose stdout as a TTY."""
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return True
+    if not sys.stdin.isatty() or os.environ.get("CI"):
+        return False
+    terminal = os.environ.get("TERM", "")
+    return terminal not in {"", "dumb"}
+
+
 def _tui_status(session: SingleAgentSession, worker, multi_agent: bool) -> tuple[str, str]:
     """Return compact status text for the persistent TUI header."""
     if multi_agent:
@@ -121,63 +133,69 @@ def _tui_snapshot(session: SingleAgentSession, worker, multi_agent: bool) -> str
 
 def _run_terminal_tui(session: SingleAgentSession, worker, arguments, multi_agent: bool) -> None:
     """Run the normal interactive terminal surface as a small dashboard."""
-    while True:
-        if worker is not None:
-            if multi_agent:
-                for agent in session.agents:
-                    session.worker(agent).collect()
-            else:
-                result = worker.collect()
-                if result is not _NOT_READY and result is not None and result.status == "ok" and session.supervisor.journal.pending("agent"):
-                    worker.request_turn()
-        print(_tui_snapshot(session, worker, multi_agent), flush=True)
-        try:
-            line = input(f"{_ESC}1;32m❯ {_ESC}0m").strip()
-        except (KeyboardInterrupt, EOFError):
-            _announce_shutdown()
-            return
-        if not line:
-            continue
-        command = line[1:] if line.startswith("/") else line[1:] if line.startswith(":") else None
-        if command is not None:
-            command = command.split(None, 1)[0].lower()
-        if command in {"quit", "q", "exit"}:
-            return
-        if command in {"help", "h"}:
-            print("Commands: /status, /agents, /log, /repl-log, /model-log, /python, /restart, /plain, /quit")
-            continue
-        if command in {"status", "state"}:
-            print(_format_state(session)); continue
-        if command == "agents":
-            _print_agents(session); continue
-        if command == "log":
-            for message in session.conversation_log():
-                print(f"{message.created_at.isoformat()} {message.sender} -> {message.recipient}: {message.text}")
-            continue
-        if command == "repl-log":
-            _print_repl_log(session); continue
-        if command == "model-log":
-            _print_model_log(session); continue
-        if command == "http-log":
-            path = arguments.data_dir / "provider-http.jsonl"
-            print(path.read_text(encoding="utf-8") if path.exists() else "No provider HTTP requests have been recorded.")
-            continue
-        if command == "python":
-            _run_user_repl(session); continue
-        if command == "restart":
-            print(session.restart()); continue
-        if command == "plain":
-            print("Plain mode is available by restarting with --plain."); continue
-        if command is not None:
-            print(f"Unknown command: /{command}. Try /help."); continue
-        session.send(line)
-        if arguments.demo:
-            session.run_demo_turn()
-        if worker is not None:
+    # Keep the dashboard out of terminal scrollback. This also makes redraws
+    # land in the visible viewport instead of leaving the user at its top.
+    print(f"{_ESC}?1049h{_ESC}?25l{_ESC}2J{_ESC}H", end="", flush=True)
+    try:
+        while True:
+            if worker is not None:
+                if multi_agent:
+                    for agent in session.agents:
+                        session.worker(agent).collect()
+                else:
+                    result = worker.collect()
+                    if result is not _NOT_READY and result is not None and result.status == "ok" and session.supervisor.journal.pending("agent"):
+                        worker.request_turn()
+            print(_tui_snapshot(session, worker, multi_agent), flush=True)
             try:
-                worker.request_turn()
-            except OpenAIConfigurationError as error:
-                print(f"Model setup required: {error}")
+                line = input(f"{_ESC}1;32m❯ {_ESC}0m").strip()
+            except (KeyboardInterrupt, EOFError):
+                _announce_shutdown()
+                return
+            if not line:
+                continue
+            command = line[1:] if line.startswith("/") else line[1:] if line.startswith(":") else None
+            if command is not None:
+                command = command.split(None, 1)[0].lower()
+            if command in {"quit", "q", "exit"}:
+                return
+            if command in {"help", "h"}:
+                print("Commands: /status, /agents, /log, /repl-log, /model-log, /python, /restart, /plain, /quit")
+                continue
+            if command in {"status", "state"}:
+                print(_format_state(session)); continue
+            if command == "agents":
+                _print_agents(session); continue
+            if command == "log":
+                for message in session.conversation_log():
+                    print(f"{message.created_at.isoformat()} {message.sender} -> {message.recipient}: {message.text}")
+                continue
+            if command == "repl-log":
+                _print_repl_log(session); continue
+            if command == "model-log":
+                _print_model_log(session); continue
+            if command == "http-log":
+                path = arguments.data_dir / "provider-http.jsonl"
+                print(path.read_text(encoding="utf-8") if path.exists() else "No provider HTTP requests have been recorded.")
+                continue
+            if command == "python":
+                _run_user_repl(session); continue
+            if command == "restart":
+                print(session.restart()); continue
+            if command == "plain":
+                print("Plain mode is available by restarting with --plain."); continue
+            if command is not None:
+                print(f"Unknown command: /{command}. Try /help."); continue
+            session.send(line)
+            if arguments.demo:
+                session.run_demo_turn()
+            if worker is not None:
+                try:
+                    worker.request_turn()
+                except OpenAIConfigurationError as error:
+                    print(f"Model setup required: {error}")
+    finally:
+        print(f"{_ESC}?25h{_ESC}?1049l", end="", flush=True)
 
 
 def _print_agents(session) -> None:
@@ -224,12 +242,26 @@ def _render_default_presentation(
 
 
 def _run_user_repl(session: SingleAgentSession) -> None:
-    print("Python inspection mode. Enter one Python statement/block per line; :back returns to messages.")
+    print("Python inspection mode. Available: presentable, agent, agents, conversation. Enter one Python statement/block per line; :back returns to messages.")
     while True:
-        source = input("py> ")
+        try:
+            source = input("py> ")
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
         if source.strip() == ":back":
             return
-        result = session.user_evaluate(source)
+        try:
+            ast.parse(source, mode="eval")
+        except SyntaxError:
+            pass
+        else:
+            source = f"_result = ({source})"
+        try:
+            result = session.user_evaluate(source)
+        except Exception as error:
+            print(f"inspection error: {type(error).__name__}: {error}")
+            continue
         if result.status == "ok":
             if result.value is not None:
                 print(result.value)
@@ -384,7 +416,7 @@ def main() -> None:
                 worker.close()
         session.close()
         return
-    if (arguments.tui or (sys.stdin.isatty() and sys.stdout.isatty())) and not arguments.plain:
+    if (arguments.tui or _interactive_terminal()) and not arguments.plain:
         try:
             _run_terminal_tui(session, worker, arguments, multi_agent)
         finally:
