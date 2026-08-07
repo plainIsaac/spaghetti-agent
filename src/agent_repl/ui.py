@@ -44,6 +44,7 @@ def project_view(session: Any) -> dict[str, Any]:
                 for message in session.conversation_log()
             ],
             "repl_log": session.repl_log(),
+            "runtime_events": session.supervisor.events.recent(limit=200),
         },
     }
 

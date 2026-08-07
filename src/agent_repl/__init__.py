@@ -22,6 +22,7 @@ from .web_ui import LocalProjectManagerUI, LocalProjectUI, make_project_manager_
 from .projects import Project, ProjectManager, ProjectRegistry
 from .supervisor import RestartReport, Supervisor
 from .token_budget import TokenBudget, TokenBudgetExceeded
+from .event_stream import RuntimeEvent, RuntimeEventStream
 
 __all__ = [
     "InboxJournal",
@@ -56,4 +57,6 @@ __all__ = [
     "Supervisor",
     "TokenBudget",
     "TokenBudgetExceeded",
+    "RuntimeEvent",
+    "RuntimeEventStream",
 ]

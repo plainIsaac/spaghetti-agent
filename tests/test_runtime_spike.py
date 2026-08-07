@@ -9,7 +9,7 @@ import time
 import unittest
 import sys
 
-from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, SingleAgentSession, Supervisor
+from agent_repl import InboxJournal, IsolatedExecution, ObservableStateRegistry, RuntimeEventStream, SingleAgentSession, Supervisor
 from agent_repl.workspace import Workspace
 from agent_repl.ui import project_index, project_view
 from agent_repl.web_ui import LocalProjectManagerUI, LocalProjectUI, make_handler, make_project_manager_handler
@@ -18,6 +18,51 @@ from agent_repl.multi_agent import MultiAgentSession
 
 
 class RuntimeSpikeTests(unittest.TestCase):
+    def test_runtime_event_stream_is_live_durable_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runtime-events.jsonl"
+            events = RuntimeEventStream(path)
+            subscriber = events.subscribe()
+            emitted = events.emit(
+                "model.completed", agent="coordinator", turn_id="turn-1",
+                payload={"authorization": "Bearer secret", "input_tokens": 42, "nested": {"password": "hidden"}},
+            )
+
+            live = subscriber.get(timeout=1)
+            events.unsubscribe(subscriber)
+            self.assertEqual(live.id, emitted.id)
+            self.assertEqual(live.payload["authorization"], "[redacted]")
+            self.assertEqual(live.payload["input_tokens"], 42)
+            self.assertEqual(live.payload["nested"]["password"], "[redacted]")
+            self.assertEqual(RuntimeEventStream(path).recent()[0]["turn_id"], "turn-1")
+
+    def test_assertion_lifecycle_is_emitted_to_runtime_stream(self) -> None:
+        journal = InboxJournal()
+        events = RuntimeEventStream()
+        supervisor = Supervisor(journal, event_stream=events)
+        self.addCleanup(journal.close)
+        self.addCleanup(supervisor.close)
+        for name in ("coordinator", "reviewer"):
+            supervisor.create_repl(name)
+            supervisor.start_agent_kernel(name)
+
+        requested = supervisor.agent_kernel("coordinator").evaluate(
+            "_result = agents.assert_async('reviewer', 'The manifest is safe')"
+        ).value
+        supervisor.agent_kernel("reviewer").evaluate(
+            f"agents.resolve_assertion({requested['id']}, True, {{'checked': 'manifest'}})"
+        )
+
+        kinds = [event["kind"] for event in events.recent()]
+        self.assertIn("assertion.requested", kinds)
+        self.assertIn("assertion.delivered", kinds)
+        self.assertIn("assertion.resolved", kinds)
+        assertion_events = [event for event in events.recent() if event["kind"].startswith("assertion.")]
+        self.assertTrue(all(event["assertion_id"] == requested["id"] for event in assertion_events))
+        completed = [event for event in events.recent() if event["kind"] == "capability.completed"]
+        assertion_capabilities = [event for event in completed if event["payload"]["capability"].startswith("agents.assert")]
+        self.assertTrue(all(event["assertion_id"] == requested["id"] for event in assertion_capabilities))
+
     def test_mvp_delegated_build_verifies_branch_then_merges(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             session = MultiAgentSession.open(directory, workspace_root=str(Path(directory) / "workspace"))
@@ -902,6 +947,62 @@ class RuntimeSpikeTests(unittest.TestCase):
             recovered.evaluate("_result = inbox.pending()").value,
             [{"id": 1, "sender": "user", "text": "Resume with a safe approach."}],
         )
+
+    def test_agents_can_resolve_durable_async_assertions(self) -> None:
+        journal = InboxJournal()
+        supervisor = Supervisor(journal)
+        self.addCleanup(journal.close)
+        self.addCleanup(supervisor.close)
+        for name in ("coordinator", "reviewer"):
+            supervisor.create_repl(name)
+            supervisor.start_agent_kernel(name)
+
+        coordinator = supervisor.agent_kernel("coordinator")
+        reviewer = supervisor.agent_kernel("reviewer")
+        requested = coordinator.evaluate(
+            "_result = agents.assert_async('reviewer', 'The output is valid JSON', {'path': 'result.json'})"
+        ).value
+        resolved = reviewer.evaluate(
+            "request = agents.pending_assertions()[0]\n"
+            "_result = agents.resolve_assertion(request['id'], True, {'parser': 'json.loads'})"
+        ).value
+
+        self.assertEqual(requested["status"], "pending")
+        self.assertEqual(resolved["passed"], True)
+        self.assertEqual(resolved["evidence"], {"parser": "json.loads"})
+        self.assertIn("Assertion 1 resolved", journal.pending("coordinator")[0].text)
+        self.assertEqual(coordinator.evaluate("_result = agents.assertion(1)['status']").value, "resolved")
+
+    def test_sync_assertion_waits_for_concurrent_agent_response(self) -> None:
+        journal = InboxJournal()
+        supervisor = Supervisor(journal)
+        self.addCleanup(journal.close)
+        self.addCleanup(supervisor.close)
+        for name in ("coordinator", "reviewer"):
+            supervisor.create_repl(name)
+            supervisor.start_agent_kernel(name)
+        coordinator = supervisor.agent_kernel("coordinator")
+        reviewer = supervisor.agent_kernel("reviewer")
+        holder: dict[str, object] = {}
+
+        waiting = threading.Thread(
+            target=lambda: holder.setdefault(
+                "result", coordinator.evaluate("_result = agents.assert_sync('reviewer', 'Tests pass', timeout=1)", timeout=2)
+            )
+        )
+        waiting.start()
+        deadline = time.monotonic() + 1
+        while not journal.pending_assertions("reviewer") and time.monotonic() < deadline:
+            time.sleep(0.01)
+        reviewer.evaluate("request = agents.pending_assertions()[0]\nagents.resolve_assertion(request['id'], False, 'one failure')")
+        waiting.join(timeout=2)
+
+        self.assertFalse(waiting.is_alive())
+        result = holder["result"]
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.value["passed"], False)
+        self.assertEqual(result.value["evidence"], "one failure")
+        self.assertEqual(journal.pending("coordinator"), [])
 
 
 if __name__ == "__main__":

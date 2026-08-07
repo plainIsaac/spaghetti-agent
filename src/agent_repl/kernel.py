@@ -490,6 +490,23 @@ class Agents:
         """Compatibility alias for agents.send_message(recipient, text)."""
         return self.message(recipient, text)
 
+    def assert_async(self, recipient: str, claim: str, context: Any = None) -> dict[str, Any]:
+        """Ask another agent to verify a claim and return immediately."""
+        return self._call_supervisor("agents.assert_async", {"recipient": recipient, "claim": claim, "context": context})
+
+    def assert_sync(self, recipient: str, claim: str, context: Any = None, timeout: float = 30) -> dict[str, Any]:
+        """Ask another agent to verify a claim and wait for its response."""
+        return self._call_supervisor("agents.assert_sync", {"recipient": recipient, "claim": claim, "context": context, "timeout": timeout})
+
+    def pending_assertions(self) -> list[dict[str, Any]]:
+        return self._call_supervisor("agents.assertions.pending", {})
+
+    def resolve_assertion(self, assertion_id: int, passed: bool, evidence: Any = None) -> dict[str, Any]:
+        return self._call_supervisor("agents.assertions.resolve", {"assertion_id": assertion_id, "passed": passed, "evidence": evidence})
+
+    def assertion(self, assertion_id: int) -> dict[str, Any]:
+        return self._call_supervisor("agents.assertions.get", {"assertion_id": assertion_id})
+
     def spawn(self, name: str, role: str, task: Any = None, details: Any = None) -> dict[str, Any]:
         # Compatibility with the natural three-argument form
         # spawn(name, task_title, details). The four-argument form remains the

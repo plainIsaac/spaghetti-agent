@@ -5,6 +5,7 @@ from __future__ import annotations
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import queue
 from pathlib import Path
 from threading import Thread
 from typing import Any, Callable
@@ -61,6 +62,14 @@ def make_handler(session: Any, on_message: Callable[[], None] | None = None):
                     self.send_error(HTTPStatus.NOT_FOUND)
             elif self.path == "/api/view":
                 self._send(HTTPStatus.OK, "application/json", json.dumps(project_view(session), default=str).encode())
+            elif urlsplit(self.path).path == "/api/events":
+                query = parse_qs(urlsplit(self.path).query)
+                after = int(query.get("after", ["0"])[0])
+                limit = int(query.get("limit", ["200"])[0])
+                body = json.dumps({"events": session.supervisor.events.recent(after, limit)}, default=str).encode()
+                self._send(HTTPStatus.OK, "application/json", body)
+            elif urlsplit(self.path).path == "/api/events/stream":
+                self._stream_events(session)
             elif urlsplit(self.path).path == "/api/workspace":
                 try:
                     workspace = session.supervisor.workspace
@@ -101,6 +110,35 @@ def make_handler(session: Any, on_message: Callable[[], None] | None = None):
 
         def _send(self, status: HTTPStatus, content_type: str, body: bytes) -> None:
             self.send_response(status); self.send_header("content-type", content_type); self.send_header("content-length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+        def _stream_events(self, active_session: Any) -> None:
+            query_values = parse_qs(urlsplit(self.path).query)
+            after = int(query_values.get("after", ["0"])[0])
+            subscriber = active_session.supervisor.events.subscribe()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("content-type", "text/event-stream; charset=utf-8")
+            self.send_header("cache-control", "no-cache")
+            self.send_header("connection", "keep-alive")
+            self.end_headers()
+            try:
+                for event in active_session.supervisor.events.recent(after, 1_000):
+                    self._write_event(event)
+                while True:
+                    try:
+                        event = subscriber.get(timeout=15)
+                    except queue.Empty:
+                        self.wfile.write(b": heartbeat\n\n"); self.wfile.flush()
+                        continue
+                    self._write_event(event.as_dict())
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                active_session.supervisor.events.unsubscribe(subscriber)
+
+        def _write_event(self, event: dict[str, Any]) -> None:
+            payload = json.dumps(event, ensure_ascii=False, default=str)
+            self.wfile.write(f"id: {event['id']}\nevent: {event['kind']}\ndata: {payload}\n\n".encode())
+            self.wfile.flush()
 
         def log_message(self, _format: str, *_args: object) -> None:
             return

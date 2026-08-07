@@ -136,6 +136,42 @@ them and retrieve additional context through Python APIs in the same model turn.
 They publish a small presentable state for the default UI; deeper state and logs
 remain available for intentional inspection.
 
+Agents can also request focused verification from one another. An asynchronous
+assertion returns a durable request immediately and delivers a result message
+later; a synchronous assertion waits for the same durable result and is intended
+for an already-running peer:
+
+```python
+request = agents.assert_async("reviewer", "The migration preserves every account row", {"path": "migration.sql"})
+for assertion in agents.pending_assertions():
+    agents.resolve_assertion(assertion["id"], True, {"checked": "row-count and keys"})
+result = agents.assertion(request["id"])
+```
+
+### Real-time runtime events
+
+Managed projects persist structured events to `runtime-events.jsonl`. Events
+include model turns and streamed deltas, capability calls and durations, inbox
+delivery, and assertion request/delivery/resolution. They carry available
+`agent`, `turn_id`, `task_id`, and `assertion_id` correlation fields. Sensitive
+credential fields are redacted and oversized strings are bounded.
+
+The local project server exposes recent history and a live Server-Sent Events
+stream:
+
+```text
+GET /api/events?after=0&limit=200
+GET /api/events/stream?after=0
+```
+
+In Python, consumers can subscribe without polling:
+
+```python
+subscription = session.supervisor.events.subscribe()
+event = subscription.get(timeout=10)
+session.supervisor.events.unsubscribe(subscription)
+```
+
 The managed-project lifecycle is:
 
 ```text

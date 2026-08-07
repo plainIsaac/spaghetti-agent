@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import json
 import queue
 import threading
+import time
 from typing import Any
 
 from .journal import InboxJournal, Message
@@ -19,6 +20,7 @@ from .working_context import WorkingContext
 from .workspace import Workspace
 from .token_budget import TokenBudget
 from .static_agents import WorkspaceWatcher
+from .event_stream import RuntimeEventStream
 
 
 _STOP = object()
@@ -76,7 +78,7 @@ class ReplQueue:
 class Supervisor:
     """Coordinates explicit inbox sharing and schedules opt-in delivery."""
 
-    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None, working_context: WorkingContext | None = None, workspace: Workspace | None = None, token_budget: TokenBudget | None = None) -> None:
+    def __init__(self, journal: InboxJournal, observable_state: ObservableStateRegistry | None = None, tasks: TaskRegistry | None = None, working_context: WorkingContext | None = None, workspace: Workspace | None = None, token_budget: TokenBudget | None = None, event_stream: RuntimeEventStream | None = None) -> None:
         self.journal = journal
         self._owns_observable_state = observable_state is None
         self.observable_state = observable_state or ObservableStateRegistry()
@@ -88,6 +90,7 @@ class Supervisor:
         self.workspace = workspace or Workspace(".")
         self.token_budget = token_budget or TokenBudget()
         self._owns_token_budget = token_budget is None
+        self.events = event_stream or RuntimeEventStream()
         self._static_watchers: list[WorkspaceWatcher] = [
             WorkspaceWatcher(int(row["id"]), tuple(row["paths"]), str(row["recipient"]), str(row["message"]))
             for row in self.workspace.workspace_watchers()
@@ -102,6 +105,7 @@ class Supervisor:
         self._user_agent = "agent"
         self.allow_subagents = True
         self._turn_messages: dict[str, list[int]] = {}
+        self._turn_ids: dict[str, str] = {}
         self._scheduler_running = threading.Event()
         self._scheduler_running.set()
         self._scheduler_thread = threading.Thread(target=self._schedule_due_tasks, name="task-scheduler", daemon=True)
@@ -156,6 +160,12 @@ class Supervisor:
 
     def clear_turn_messages(self, agent: str) -> None:
         self._turn_messages.pop(agent, None)
+
+    def set_turn_id(self, agent: str, turn_id: str | None) -> None:
+        if turn_id is None:
+            self._turn_ids.pop(agent, None)
+        else:
+            self._turn_ids[agent] = turn_id
 
     def set_agent_spawner(self, spawner: Callable[[str, str], None] | None, allow_subagents: bool = True) -> None:
         self._agent_spawner, self.allow_subagents = spawner, allow_subagents
@@ -262,6 +272,76 @@ class Supervisor:
             self.working_context.clear_lifetime(agent, "line")
 
     def _handle_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
+        started = time.monotonic()
+        task_id = self._active_tasks.get(agent)
+        assertion_id = payload.get("assertion_id")
+        turn_id = self._turn_ids.get(agent)
+        self.events.emit("capability.requested", agent=agent, turn_id=turn_id, task_id=task_id, assertion_id=assertion_id,
+                         payload={"capability": kind, "arguments": payload})
+        try:
+            value = self._dispatch_kernel_capability(agent, kind, payload)
+        except BaseException as error:
+            self.events.emit("capability.failed", agent=agent, turn_id=turn_id, task_id=task_id, assertion_id=assertion_id,
+                             payload={"capability": kind, "duration_ms": round((time.monotonic() - started) * 1000, 3), "error": f"{type(error).__name__}: {error}"})
+            raise
+        completed_assertion_id = assertion_id
+        if completed_assertion_id is None and kind in {"agents.assert_async", "agents.assert_sync", "agents.assertions.resolve"} and isinstance(value, dict):
+            completed_assertion_id = value.get("id")
+        self.events.emit("capability.completed", agent=agent, turn_id=turn_id, task_id=task_id, assertion_id=completed_assertion_id,
+                         payload={"capability": kind, "duration_ms": round((time.monotonic() - started) * 1000, 3), "result": value})
+        return value
+
+    def _dispatch_kernel_capability(self, agent: str, kind: str, payload: dict[str, Any]) -> Any:
+        if kind in {"agents.assert_async", "agents.assert_sync"}:
+            recipient = str(payload["recipient"])
+            claim = str(payload["claim"]).strip()
+            if recipient not in self._repls:
+                raise KeyError(f"Unknown agent: {recipient}")
+            if recipient == agent:
+                raise ValueError("agent assertions require another agent")
+            if not claim:
+                raise ValueError("agent assertion claim must not be empty")
+            mode = "async" if kind.endswith("async") else "sync"
+            timeout = float(payload.get("timeout", 30))
+            if mode == "sync" and timeout <= 0:
+                raise ValueError("assertion timeout must be positive")
+            assertion = self.journal.create_assertion(agent, recipient, claim, payload.get("context"), mode)
+            self.events.emit("assertion.requested", agent=agent, turn_id=self._turn_ids.get(agent), task_id=self._active_tasks.get(agent), assertion_id=assertion.id,
+                             payload={"responder": recipient, "claim": claim, "context": payload.get("context"), "mode": mode})
+            message = self.journal.append(
+                recipient=recipient, sender=agent,
+                text=f"Assertion {assertion.id} requested by {agent}: {claim}\nRespond with agents.resolve_assertion({assertion.id}, passed, evidence).",
+            )
+            kernel = self._kernels.get(recipient)
+            if kernel is not None:
+                kernel.deliver(message)
+            self.events.emit("assertion.delivered", agent=recipient, turn_id=self._turn_ids.get(agent), task_id=self._active_tasks.get(agent), assertion_id=assertion.id,
+                             payload={"requester": agent, "message_id": message.id})
+            if mode == "async":
+                return self._assertion_data(assertion)
+            return self._assertion_data(self.journal.wait_for_assertion(assertion.id, agent, timeout))
+        if kind == "agents.assertions.pending":
+            return [self._assertion_data(value) for value in self.journal.pending_assertions(agent)]
+        if kind == "agents.assertions.resolve":
+            if not isinstance(payload.get("passed"), bool):
+                raise TypeError("agents.resolve_assertion passed must be bool")
+            assertion = self.journal.resolve_assertion(int(payload["assertion_id"]), agent, payload["passed"], payload.get("evidence"))
+            self.events.emit("assertion.resolved", agent=agent, turn_id=self._turn_ids.get(agent), task_id=self._active_tasks.get(agent), assertion_id=assertion.id,
+                             payload={"requester": assertion.requester, "passed": assertion.passed, "evidence": assertion.evidence, "mode": assertion.mode})
+            if assertion.mode == "async":
+                message = self.journal.append(
+                    recipient=assertion.requester, sender=agent,
+                    text=f"Assertion {assertion.id} resolved by {agent}: {'passed' if assertion.passed else 'failed'}. Inspect agents.assertion({assertion.id}).",
+                )
+                kernel = self._kernels.get(assertion.requester)
+                if kernel is not None:
+                    kernel.deliver(message)
+            return self._assertion_data(assertion)
+        if kind == "agents.assertions.get":
+            assertion = self.journal.get_assertion(int(payload["assertion_id"]))
+            if assertion is None or agent not in {assertion.requester, assertion.responder}:
+                raise KeyError(payload["assertion_id"])
+            return self._assertion_data(assertion)
         if kind == "static_agents.workspace_watcher":
             recipient = str(payload["recipient"])
             if recipient not in self._repls:
@@ -582,9 +662,20 @@ class Supervisor:
             "created_at": message.created_at.isoformat(),
         }
 
+    @staticmethod
+    def _assertion_data(assertion: Any) -> dict[str, Any]:
+        return {
+            "id": assertion.id, "requester": assertion.requester, "responder": assertion.responder,
+            "claim": assertion.claim, "context": assertion.context, "mode": assertion.mode,
+            "status": assertion.status, "passed": assertion.passed, "evidence": assertion.evidence,
+            "created_at": assertion.created_at.isoformat(),
+            "resolved_at": assertion.resolved_at.isoformat() if assertion.resolved_at else None,
+        }
+
     def append_user_message(self, agent: str, text: str) -> Message:
         """Durably append first; any handler runs later in the agent REPL."""
         message = self.journal.append(recipient=agent, sender="user", text=text)
+        self.events.emit("inbox.message_added", agent=agent, payload={"message_id": message.id, "sender": "user", "text": text})
         kernel = self._kernels.get(agent)
         if kernel is not None:
             kernel.deliver(message)

@@ -15,6 +15,7 @@ from .tasks import TaskRegistry
 from .working_context import WorkingContext
 from .workspace import Workspace
 from .token_budget import TokenBudget
+from .event_stream import RuntimeEventStream
 
 
 class _AgentTurnSession:
@@ -53,7 +54,7 @@ class MultiAgentSession:
         # One project database keeps backup, inspection, and portability simple.
         # The durable components own separate tables within this same SQLite file.
         runtime_db = str(root / "runtime.sqlite")
-        supervisor = Supervisor(InboxJournal(runtime_db, str(root / "conversation.jsonl")), ObservableStateRegistry(runtime_db), TaskRegistry(runtime_db), WorkingContext(runtime_db), Workspace(workspace, runtime_db), TokenBudget(runtime_db))
+        supervisor = Supervisor(InboxJournal(runtime_db, str(root / "conversation.jsonl")), ObservableStateRegistry(runtime_db), TaskRegistry(runtime_db), WorkingContext(runtime_db), Workspace(workspace, runtime_db), TokenBudget(runtime_db), RuntimeEventStream(root / "runtime-events.jsonl"))
         return cls(supervisor, coordinator, specialists or ["researcher", "builder"])
 
     def start_workers(self, drivers: dict[str, OpenAICompatibleAgentDriver], default_context_window: bool = True) -> None:

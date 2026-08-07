@@ -17,6 +17,7 @@ from .tasks import TaskRegistry
 from .working_context import WorkingContext
 from .workspace import Workspace
 from .token_budget import TokenBudget
+from .event_stream import RuntimeEventStream
 
 if TYPE_CHECKING:
     from .openai_driver import OpenAICompatibleAgentDriver, PlannedTurn
@@ -60,7 +61,8 @@ class SingleAgentSession:
         observable_state = ObservableStateRegistry(observable_state_path)
         model_log_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("model-programs.jsonl"))
         runtime_path = ":memory:" if inbox_path == ":memory:" else str(Path(inbox_path).with_name("runtime.sqlite"))
-        return cls(Supervisor(journal, observable_state, TaskRegistry(runtime_path), WorkingContext(runtime_path), Workspace(Path.cwd(), runtime_path), TokenBudget(runtime_path)), agent, model_log_path)
+        event_path = None if inbox_path == ":memory:" else str(Path(inbox_path).with_name("runtime-events.jsonl"))
+        return cls(Supervisor(journal, observable_state, TaskRegistry(runtime_path), WorkingContext(runtime_path), Workspace(Path.cwd(), runtime_path), TokenBudget(runtime_path), RuntimeEventStream(event_path)), agent, model_log_path)
 
     def send(self, text: str) -> Message:
         """Queue ordinary user text without executing it as agent source code."""

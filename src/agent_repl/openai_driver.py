@@ -7,6 +7,7 @@ import ast
 import json
 import os
 import re
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from threading import Event, Lock, Timer
@@ -109,6 +110,11 @@ That call creates the child REPL and gives it the requested task; its result
 contains `agent` and `task_id`.
 The preferred messaging API is `agents.message(recipient, text)` for
 agent-to-agent messages and `inbox.reply_to_latest(text)` for user replies.
+For a focused verification request, prefer `agents.assert_async(recipient, claim, context=None)`;
+the receiving agent inspects `agents.pending_assertions()` and answers with
+`agents.resolve_assertion(id, passed, evidence)`. Use `agents.assert_sync(...)`
+only when the receiving agent is already running concurrently; otherwise the
+serialized model-turn scheduler cannot produce the response until this turn yields.
 Compatible aliases `context.send(recipient, text)`,
 `context.send_message(recipient, text)`, `agents.send(recipient, text)`, and
 `agents.send_message(recipient, text)` are also supported. For compatibility,
@@ -630,6 +636,10 @@ class OpenAIAgentController:
         on_program: Callable[[PlannedTurn], None] | None = None,
         on_phase: Callable[[str], None] | None = None,
     ) -> KernelResult | None:
+        turn_id = uuid.uuid4().hex
+        self.supervisor.set_turn_id(self.agent, turn_id)
+        self.supervisor.events.emit("model.turn_started", agent=self.agent, turn_id=turn_id,
+                                    payload={"provider": self.driver.provider_name, "model": self.driver.model})
         pending = self.supervisor.journal.pending(self.agent)
         relevant = [message for message in pending if message.text.strip() not in _LEGACY_HARNESS_COMMANDS]
         activation = [] if not relevant else [{
@@ -639,6 +649,8 @@ class OpenAIAgentController:
             "text": relevant[-1].text,
         }]
         if not activation:
+            self.supervisor.events.emit("model.turn_skipped", agent=self.agent, turn_id=turn_id, payload={"reason": "no pending activation"})
+            self.supervisor.set_turn_id(self.agent, None)
             return None
         if self.default_context_window:
             activation[0]["context_window"] = self._context_window()
@@ -674,24 +686,33 @@ class OpenAIAgentController:
             estimated_input = estimate_tokens(json.dumps(activation)) + estimate_tokens(_INSTRUCTIONS)
             reservation = self.supervisor.token_budget.reserve(estimated_input, self.driver.output_token_reserve)
             self._publish_budget()
-            planned = self.driver.plan(activation, model_feedback, on_delta, role=self.supervisor.agent_role(self.agent))
+            def stream_delta(delta: str) -> None:
+                self.supervisor.events.emit("model.delta", agent=self.agent, turn_id=turn_id, payload={"text": delta})
+                if on_delta is not None:
+                    on_delta(delta)
+            planned = self.driver.plan(activation, model_feedback, stream_delta, role=self.supervisor.agent_role(self.agent))
             actual_tokens = (planned.usage or {}).get("total_tokens", estimated_input + estimate_tokens(planned.raw_output))
             self.supervisor.token_budget.settle(reservation, actual_tokens)
             reservation = None
             self._publish_budget(planned.usage)
             if on_program is not None:
                 on_program(planned)
+            self.supervisor.events.emit("model.program", agent=self.agent, turn_id=turn_id,
+                                        payload={"source": planned.source, "resolved_model": planned.resolved_model, "usage": planned.usage})
             self._validate_program(planned.source)
         except OpenAIConfigurationError:
             if reservation is not None:
                 self.supervisor.token_budget.settle(reservation, reservation.estimated_input_tokens)
                 self._publish_budget()
+            self.supervisor.events.emit("model.turn_failed", agent=self.agent, turn_id=turn_id, payload={"error": "provider configuration unavailable"})
+            self.supervisor.set_turn_id(self.agent, None)
             raise
         except Exception as error:
             if reservation is not None:
                 self.supervisor.token_budget.settle(reservation, reservation.estimated_input_tokens)
                 self._publish_budget()
             error_text = f"{type(error).__name__}: {error}"
+            self.supervisor.events.emit("model.turn_failed", agent=self.agent, turn_id=turn_id, payload={"error": error_text})
             instruction = "Your previous output was rejected. Return one valid Python program only."
             if isinstance(error, SyntaxError) and "escape" in str(error).lower():
                 instruction = "Your program has an invalid escape sequence. Use a raw regex string such as r'\\s+' or double each backslash, then return corrected Python only."
@@ -741,6 +762,7 @@ class OpenAIAgentController:
                     show_by_default=True,
                     priority=100,
                 )
+            self.supervisor.set_turn_id(self.agent, None)
             return KernelResult("error", error=error_text)
         if on_phase is not None:
             on_phase("executing")
@@ -794,6 +816,9 @@ class OpenAIAgentController:
                 show_by_default=False,
                 priority=100,
             )
+        self.supervisor.events.emit("model.turn_completed", agent=self.agent, turn_id=turn_id,
+                                    payload={"status": result.status, "error": result.error})
+        self.supervisor.set_turn_id(self.agent, None)
         return result
 
     def _publish_budget(self, last_turn_usage: dict[str, int] | None = None) -> None:
