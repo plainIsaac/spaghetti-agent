@@ -4,8 +4,10 @@ from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
+import os
 import unittest
 from time import sleep
+from unittest.mock import patch
 
 from agent_repl import FallbackAgentDriver, GeminiAgentDriver, OpenAIAgentDriver, OpenRouterAgentDriver, SingleAgentSession
 from agent_repl.token_budget import TokenBudget, TokenBudgetExceeded
@@ -14,6 +16,9 @@ from agent_repl.openai_driver import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    CustomOpenAICompatibleAgentDriver,
+    OpenAIConfigurationError,
+    driver_from_policy,
 )
 
 
@@ -136,6 +141,33 @@ class OpenAIDriverTests(unittest.TestCase):
         driver.plan([], {})
         self.assertEqual(DEFAULT_OPENROUTER_MODEL, "nvidia/nemotron-3-super-120b-a12b:free")
         self.assertEqual(client.responses.calls[0]["model"], "nvidia/nemotron-3-super-120b-a12b:free")
+
+    def test_custom_openai_compatible_provider_uses_configured_endpoint(self) -> None:
+        with patch.dict(os.environ, {
+            "OPEN_AI_COMPAT_API_KEY": "compat-key",
+            "OPEN_AI_COMPAT_API_URL": "https://provider.example/v1",
+        }, clear=True):
+            driver = CustomOpenAICompatibleAgentDriver(model="provider-model")
+
+        self.assertEqual(driver.provider_name, "OpenAI-compatible")
+        self.assertEqual(driver.api_key_environment, "OPEN_AI_COMPAT_API_KEY")
+        self.assertEqual(driver.base_url, "https://provider.example/v1")
+
+    def test_custom_openai_compatible_provider_requires_endpoint(self) -> None:
+        with patch.dict(os.environ, {"OPEN_AI_COMPAT_API_KEY": "compat-key"}, clear=True):
+            driver = CustomOpenAICompatibleAgentDriver(client=None)
+            with self.assertRaisesRegex(OpenAIConfigurationError, "OPEN_AI_COMPAT_API_URL"):
+                driver.validate_configuration()
+
+    def test_policy_constructs_custom_openai_compatible_provider(self) -> None:
+        with patch.dict(os.environ, {
+            "OPEN_AI_COMPAT_API_KEY": "compat-key",
+            "OPEN_AI_COMPAT_API_URL": "https://provider.example/v1",
+        }, clear=True):
+            driver = driver_from_policy({"provider": "openai-compatible", "model": "provider-model"})
+
+        self.assertIsInstance(driver, CustomOpenAICompatibleAgentDriver)
+        self.assertEqual(driver.model, "provider-model")
 
     def test_plan_uses_configured_model_when_stream_does_not_report_resolution(self) -> None:
         planned = OpenAIAgentDriver(model="test-model", client=FakeClient("_result = None")).plan([], {})

@@ -205,6 +205,17 @@ Configure the matching environment variable and choose a provider:
 | Groq | `--groq` | `GROQ_API_KEY` |
 | Gemini | `--gemini` | `GEMINI_API_KEY` |
 | OpenAI | `--openai` | `OPENAI_API_KEY` |
+| Custom OpenAI-compatible | `--openai-compatible` | `OPEN_AI_COMPAT_API_KEY`, `OPEN_AI_COMPAT_API_URL` |
+
+For a custom OpenAI-compatible provider, set the API key and the provider's
+OpenAI-compatible base URL. The URL is passed to the SDK unchanged; include any
+required `/v1` path. Set `--model` to the model identifier expected by that
+provider.
+
+```dotenv
+OPEN_AI_COMPAT_API_KEY=your_key_here
+OPEN_AI_COMPAT_API_URL=https://your-provider.example/v1
+```
 
 Useful runtime options:
 

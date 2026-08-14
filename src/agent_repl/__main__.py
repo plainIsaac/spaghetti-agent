@@ -14,6 +14,8 @@ from .openai_driver import (
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_GROQ_MODEL,
     DEFAULT_GEMINI_MODEL,
+    DEFAULT_OPENAI_COMPAT_MODEL,
+    CustomOpenAICompatibleAgentDriver,
     GroqAgentDriver,
     GeminiAgentDriver,
     FallbackAgentDriver,
@@ -290,6 +292,7 @@ def main() -> None:
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
     turn_mode.add_argument("--groq", action="store_true", help="Run a Groq Responses API turn (free-tier testing when available)")
     turn_mode.add_argument("--gemini", action="store_true", help="Run a Gemini compatibility API turn (free-tier testing when available)")
+    turn_mode.add_argument("--openai-compatible", dest="openai_compatible", action="store_true", help="Run a custom OpenAI-compatible API turn")
     agent_mode = parser.add_mutually_exclusive_group()
     agent_mode.add_argument("--multi-agent", dest="multi_agent", action="store_true", default=True, help="Run the coordinator runtime (default)")
     agent_mode.add_argument("--single-agent", dest="multi_agent", action="store_false", help="Use the legacy one-agent runtime")
@@ -323,6 +326,8 @@ def main() -> None:
         model_driver = GroqAgentDriver(arguments.model or DEFAULT_GROQ_MODEL, request_timeout=arguments.request_timeout)
     if arguments.gemini:
         model_driver = GeminiAgentDriver(arguments.model or DEFAULT_GEMINI_MODEL, request_timeout=arguments.request_timeout)
+    if arguments.openai_compatible:
+        model_driver = CustomOpenAICompatibleAgentDriver(arguments.model or DEFAULT_OPENAI_COMPAT_MODEL, request_timeout=arguments.request_timeout)
     if arguments.fallback_free and model_driver is not None:
         alternatives = [OpenRouterAgentDriver(request_timeout=arguments.request_timeout), GroqAgentDriver(request_timeout=arguments.request_timeout), GeminiAgentDriver(request_timeout=arguments.request_timeout)]
         model_driver = FallbackAgentDriver([model_driver, *[driver for driver in alternatives if type(driver) is not type(model_driver)]])
@@ -336,7 +341,7 @@ def main() -> None:
         model_driver.set_http_log_path(str(arguments.data_dir / "provider-http.jsonl"))
     if arguments.project_manager:
         if model_driver is None:
-            parser.error("--project-manager requires a model provider (--openai, --openrouter, --groq, or --gemini)")
+            parser.error("--project-manager requires a model provider (--openai, --openrouter, --groq, --gemini, or --openai-compatible)")
         def configure_project(session: MultiAgentSession) -> None:
             policy = session.inference_policy
             session.supervisor.token_budget.set_limit(policy.get("token_budget", arguments.token_budget))
@@ -371,7 +376,7 @@ def main() -> None:
             ui.server.server_close(); manager.close()
         return
     if multi_agent and model_driver is None:
-        parser.error("The default coordinator runtime requires --openai or --openrouter; use --demo or --single-agent for local experiments")
+        parser.error("The default coordinator runtime requires a model provider; use --demo or --single-agent for local experiments")
     session = MultiAgentSession.open(str(arguments.data_dir), specialists=[]) if multi_agent else SingleAgentSession.open(
         str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
     )

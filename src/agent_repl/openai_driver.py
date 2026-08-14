@@ -23,6 +23,7 @@ DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
 DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_OPENAI_COMPAT_MODEL = "gpt-4o-mini"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_CONTEXT_WINDOW_MESSAGES = 8
 DEFAULT_CONTEXT_WINDOW_CHARS = 4_000
@@ -227,6 +228,7 @@ class OpenAICompatibleAgentDriver:
         provider_name: str,
         api_key_environment: str,
         base_url: str | None = None,
+        endpoint_environment: str | None = None,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         transport: str = "responses",
         output_token_reserve: int = 1_024,
@@ -238,6 +240,7 @@ class OpenAICompatibleAgentDriver:
         self.provider_name = provider_name
         self.api_key_environment = api_key_environment
         self.base_url = base_url
+        self.endpoint_environment = endpoint_environment
         self.request_timeout = request_timeout
         self.transport = transport
         self.output_token_reserve = output_token_reserve
@@ -433,6 +436,10 @@ class OpenAICompatibleAgentDriver:
             raise OpenAIConfigurationError(
                 f"Set {self.api_key_environment} before enabling the {self.provider_name} agent driver"
             )
+        if self.endpoint_environment is not None and not self.base_url:
+            raise OpenAIConfigurationError(
+                f"Set {self.endpoint_environment} before enabling the {self.provider_name} agent driver"
+            )
         try:
             from openai import OpenAI
         except ImportError as error:
@@ -538,6 +545,26 @@ class GeminiAgentDriver(OpenAICompatibleAgentDriver):
         super().__init__(model, client, provider_name="Google Gemini", api_key_environment="GEMINI_API_KEY", base_url="https://generativelanguage.googleapis.com/v1beta/openai/", request_timeout=request_timeout, transport="chat_completions")
 
 
+class CustomOpenAICompatibleAgentDriver(OpenAICompatibleAgentDriver):
+    """An OpenAI-compatible Responses API provider configured by environment."""
+
+    def __init__(
+        self,
+        model: str = DEFAULT_OPENAI_COMPAT_MODEL,
+        client: ResponsesClient | None = None,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+    ) -> None:
+        super().__init__(
+            model,
+            client,
+            provider_name="OpenAI-compatible",
+            api_key_environment="OPEN_AI_COMPAT_API_KEY",
+            base_url=os.environ.get("OPEN_AI_COMPAT_API_URL"),
+            endpoint_environment="OPEN_AI_COMPAT_API_URL",
+            request_timeout=request_timeout,
+        )
+
+
 class FallbackAgentDriver:
     """Tries configured providers in order, retaining the one that served a turn."""
 
@@ -596,7 +623,7 @@ class FallbackAgentDriver:
 
 def driver_from_policy(specification: dict[str, Any], request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS) -> OpenAICompatibleAgentDriver:
     """Construct a provider driver from the durable, user-editable policy form."""
-    provider = str(specification.get("provider", "")).strip().lower().replace(" ", "")
+    provider = str(specification.get("provider", "")).strip().lower().replace(" ", "").replace("-", "")
     model = specification.get("model")
     factories = {
         "openai": (OpenAIAgentDriver, DEFAULT_OPENAI_MODEL),
@@ -604,6 +631,7 @@ def driver_from_policy(specification: dict[str, Any], request_timeout: float = D
         "groq": (GroqAgentDriver, DEFAULT_GROQ_MODEL),
         "googlegemini": (GeminiAgentDriver, DEFAULT_GEMINI_MODEL),
         "gemini": (GeminiAgentDriver, DEFAULT_GEMINI_MODEL),
+        "openaicompatible": (CustomOpenAICompatibleAgentDriver, DEFAULT_OPENAI_COMPAT_MODEL),
     }
     try:
         factory, default_model = factories[provider]
