@@ -11,3 +11,6 @@ build/
 .spaghetti-agent/
 .spaghetti-agent-projects/
 .local-live-tests/
+
+# Benchmark runs (raw calls, transcripts, generated workspaces)
+benchmarks/*/results/

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+from contextlib import redirect_stderr, redirect_stdout
+import io
 from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,9 +22,11 @@ class KernelResult:
     status: str
     value: Any = None
     error: str | None = None
+    output: str = ""
 
 
 DEFAULT_NON_COLLECTION_LOOP_LIMIT = 1_000
+PROGRAM_OUTPUT_LIMIT = 4_000
 
 
 def _configure_background_processes() -> None:
@@ -104,6 +108,11 @@ class _LoopGuardTransformer(ast.NodeTransformer):
             node.iter,
         )
         return node
+
+
+def _bounded_output(text: str) -> str:
+    """Keep the tail of program output: it usually holds the result or the failure."""
+    return text if len(text) <= PROGRAM_OUTPUT_LIMIT else "[output truncated]\n" + text[-PROGRAM_OUTPUT_LIMIT:]
 
 
 def _compile_agent_source(source: str) -> Any:
@@ -664,18 +673,22 @@ def _kernel_main(
             continue
 
         request_id = command["request_id"]
+        captured = io.StringIO()
         try:
             namespace.pop("_result", None)
             loop_budget.counts.clear()
             loop_budget.limits.clear()
-            exec(_compile_agent_source(command["source"]), namespace, namespace)
-            responses.put({"request_id": request_id, "status": "ok", "value": namespace.get("_result")})
+            with redirect_stdout(captured), redirect_stderr(captured):
+                exec(_compile_agent_source(command["source"]), namespace, namespace)
+            responses.put({"request_id": request_id, "status": "ok", "value": namespace.get("_result"),
+                           "output": _bounded_output(captured.getvalue())})
         except BaseException as error:
             responses.put(
                 {
                     "request_id": request_id,
                     "status": "error",
                     "error": f"{type(error).__name__}: {error}",
+                    "output": _bounded_output(captured.getvalue()),
                 }
             )
 
@@ -767,7 +780,7 @@ class PersistentKernel:
                 raise TimeoutError("Evaluation did not yield a result") from error
         if response["request_id"] != request_id:
             raise RuntimeError("Received a response for another evaluation")
-        result = KernelResult(response["status"], response.get("value"), response.get("error"))
+        result = KernelResult(response["status"], response.get("value"), response.get("error"), response.get("output", ""))
         status = "completed" if result.status == "ok" else "failed"
         self._set_execution(ExecutionState(request_id, status, started_at, datetime.now(UTC), result.error))
         return result
