@@ -11,6 +11,7 @@ import os
 
 from .openai_driver import (
     DEFAULT_OPENAI_MODEL,
+    OpenAIDeviceAgentDriver,
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_GROQ_MODEL,
     DEFAULT_GEMINI_MODEL,
@@ -287,6 +288,7 @@ def main() -> None:
     turn_mode = parser.add_mutually_exclusive_group()
     turn_mode.add_argument("--demo", action="store_true", help="Run a deterministic demo agent turn after each normal message")
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
+    turn_mode.add_argument("--openai-device", action="store_true", help="Run Luna through the official Codex CLI device-auth flow")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
     turn_mode.add_argument("--groq", action="store_true", help="Run a Groq Responses API turn (free-tier testing when available)")
     turn_mode.add_argument("--gemini", action="store_true", help="Run a Gemini compatibility API turn (free-tier testing when available)")
@@ -317,6 +319,8 @@ def main() -> None:
     model_driver = None
     if arguments.openai:
         model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
+    if arguments.openai_device:
+        model_driver = OpenAIDeviceAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
     if arguments.groq:
@@ -336,7 +340,7 @@ def main() -> None:
         model_driver.set_http_log_path(str(arguments.data_dir / "provider-http.jsonl"))
     if arguments.project_manager:
         if model_driver is None:
-            parser.error("--project-manager requires a model provider (--openai, --openrouter, --groq, or --gemini)")
+            parser.error("--project-manager requires a model provider (--openai, --openai-device, --openrouter, --groq, or --gemini)")
         def configure_project(session: MultiAgentSession) -> None:
             policy = session.inference_policy
             session.supervisor.token_budget.set_limit(policy.get("token_budget", arguments.token_budget))
@@ -371,7 +375,7 @@ def main() -> None:
             ui.server.server_close(); manager.close()
         return
     if multi_agent and model_driver is None:
-        parser.error("The default coordinator runtime requires --openai or --openrouter; use --demo or --single-agent for local experiments")
+        parser.error("The default coordinator runtime requires --openai, --openai-device, or --openrouter; use --demo or --single-agent for local experiments")
     session = MultiAgentSession.open(str(arguments.data_dir), specialists=[]) if multi_agent else SingleAgentSession.open(
         str(arguments.data_dir / "inbox.sqlite"), str(arguments.data_dir / "observable-state.sqlite"),
     )

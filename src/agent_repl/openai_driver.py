@@ -7,6 +7,9 @@ import ast
 import json
 import os
 import re
+import shlex
+import subprocess
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 from threading import Event, Lock, Timer
@@ -19,6 +22,7 @@ from .token_budget import TokenBudgetExceeded, TokenReservation, estimate_tokens
 
 # Default to the current cost-sensitive tier for early runtime experiments.
 DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
+DEFAULT_CODEX_CLI_COMMAND = "codex"
 DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
@@ -499,6 +503,105 @@ class OpenAIAgentDriver(OpenAICompatibleAgentDriver):
         )
 
 
+class OpenAIDeviceAgentDriver:
+    """Run Luna through the installed Codex CLI's device-authenticated session.
+
+    This driver deliberately never reads, copies, or stores Codex credentials.
+    The CLI remains the authentication and execution owner; Python only passes
+    the activation and reads the CLI's requested output file.
+    """
+
+    def __init__(
+        self,
+        model: str = DEFAULT_OPENAI_MODEL,
+        *,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        codex_command: str | list[str] = DEFAULT_CODEX_CLI_COMMAND,
+        runner: Callable[..., Any] | None = None,
+    ) -> None:
+        self.model = model
+        self.provider_name = "OpenAI (Codex device auth)"
+        self.request_timeout = request_timeout
+        self.output_token_reserve = 1_024
+        self._codex_command = shlex.split(codex_command) if isinstance(codex_command, str) else list(codex_command)
+        if not self._codex_command:
+            raise ValueError("codex command must not be empty")
+        self._run = runner or subprocess.run
+        self._http_log_path: Path | None = None
+
+    def set_http_log_path(self, path: str) -> None:
+        self._http_log_path = Path(path)
+
+    def close(self) -> None:
+        return None
+
+    def clone(self) -> "OpenAIDeviceAgentDriver":
+        clone = type(self)(self.model, request_timeout=self.request_timeout, codex_command=self._codex_command, runner=self._run)
+        clone.output_token_reserve = self.output_token_reserve
+        return clone
+
+    def _ensure_login(self) -> None:
+        status = self._run(self._codex_command + ["login", "status"], timeout=self.request_timeout, check=False)
+        if status.returncode == 0:
+            return
+        # Keep stdio attached so the official CLI can display its device URL
+        # and one-time code directly to the user. No auth material is captured.
+        login = self._run(self._codex_command + ["login", "--device-auth"], timeout=None, check=False)
+        if login.returncode != 0:
+            raise OpenAIConfigurationError("Codex device sign-in did not complete; run `codex login --device-auth` and try again")
+
+    def validate_configuration(self) -> None:
+        self._ensure_login()
+
+    def plan(
+        self,
+        activation: list[dict[str, Any]],
+        model_feedback: dict[str, Any] | None,
+        on_delta: Callable[[str], None] | None = None,
+        role: str = "agent",
+    ) -> PlannedTurn:
+        del on_delta
+        self._ensure_login()
+        request = {"activation": activation, "model_feedback": model_feedback}
+        prompt = _INSTRUCTIONS + _ROLE_POLICIES.get(role, "\nRole policy: Complete only your assigned task and communicate durable results.")
+        prompt += "\n\nActivation JSON:\n" + json.dumps(request)
+        opened = datetime.now(timezone.utc)
+        self._append_log({"timestamp": opened.isoformat(), "event": "exec_opened", "provider": self.provider_name, "model": self.model})
+        try:
+            with tempfile.NamedTemporaryFile(prefix="spaghetti-codex-", suffix=".txt", delete=False) as output:
+                output_path = Path(output.name)
+            try:
+                result = self._run(
+                    self._codex_command + ["exec", "--ephemeral", "--model", self.model, "--output-last-message", str(output_path), "-"],
+                    input=prompt.encode("utf-8"),
+                    text=False,
+                    timeout=self.request_timeout,
+                    check=False,
+                    capture_output=True,
+                )
+                if result.returncode != 0:
+                    detail = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+                    raise RuntimeError(f"Codex CLI execution failed{': ' + detail if detail else ''}")
+                raw_output = output_path.read_text(encoding="utf-8")
+            finally:
+                output_path.unlink(missing_ok=True)
+        except subprocess.TimeoutExpired as error:
+            raise TimeoutError(f"Codex CLI was idle or exceeded {self.request_timeout:.1f}s") from error
+        finally:
+            closed = datetime.now(timezone.utc)
+            self._append_log({"timestamp": closed.isoformat(), "event": "exec_closed", "provider": self.provider_name, "model": self.model})
+        source = OpenAICompatibleAgentDriver._strip_code_fence(raw_output)
+        if not source.strip():
+            raise RuntimeError("Codex CLI returned an empty agent program")
+        return PlannedTurn(source=source, request=request, raw_output=raw_output, resolved_model=self.model)
+
+    def _append_log(self, entry: dict[str, Any]) -> None:
+        if self._http_log_path is not None:
+            self._http_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._http_log_path.open("a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(entry) + "\n")
+
+
 class OpenRouterAgentDriver(OpenAICompatibleAgentDriver):
     """OpenRouter's OpenAI-compatible API, intended for low-cost smoke tests."""
 
@@ -590,10 +693,12 @@ class FallbackAgentDriver:
 
 def driver_from_policy(specification: dict[str, Any], request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS) -> OpenAICompatibleAgentDriver:
     """Construct a provider driver from the durable, user-editable policy form."""
-    provider = str(specification.get("provider", "")).strip().lower().replace(" ", "")
+    provider = str(specification.get("provider", "")).strip().lower().replace(" ", "").replace("-", "")
     model = specification.get("model")
     factories = {
         "openai": (OpenAIAgentDriver, DEFAULT_OPENAI_MODEL),
+        "openaidevice": (OpenAIDeviceAgentDriver, DEFAULT_OPENAI_MODEL),
+        "codex": (OpenAIDeviceAgentDriver, DEFAULT_OPENAI_MODEL),
         "openrouter": (OpenRouterAgentDriver, DEFAULT_OPENROUTER_MODEL),
         "groq": (GroqAgentDriver, DEFAULT_GROQ_MODEL),
         "googlegemini": (GeminiAgentDriver, DEFAULT_GEMINI_MODEL),
