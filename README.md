@@ -205,6 +205,12 @@ Configure the matching environment variable and choose a provider:
 | Groq | `--groq` | `GROQ_API_KEY` |
 | Gemini | `--gemini` | `GEMINI_API_KEY` |
 | OpenAI | `--openai` | `OPENAI_API_KEY` |
+| opencode | `--opencode` | none: uses the providers logged in to the local `opencode` CLI |
+
+`--opencode` plans turns through `opencode run`, so any model listed by
+`opencode models` works, including subscription logins such as a ChatGPT
+account. Pass the model as `provider/model`, for example
+`--opencode --model opencode-go/minimax-m3.1-flash-free`.
 
 Useful runtime options:
 

@@ -96,6 +96,16 @@ duplicate once the current work fully satisfies it. This avoids replaying a
 completed request after a cancellation or restart without treating all pending
 messages as safe to discard.
 
+A model program's printed output is captured (bounded to its last 4,000
+characters) and returned with the kernel result. With the opt-in
+`observe_program_output` controller setting, the next activation for the *same*
+still-pending message carries that program and its output as
+`previous_program`. This is a single observation, not a transcript: it is
+dropped once the message is answered. Without it, a model that inspects state
+before acting never sees what it inspected; the context-economics experiment
+(`docs/experiments/context-economics.md`) found that this leaves most requests
+unanswered.
+
 Model providers are adapters behind the same driver interface. Deterministic
 scripted drivers remain the baseline for runtime tests; low-cost or free hosted
 models are reserved for smoke tests, and stronger models are selected only when

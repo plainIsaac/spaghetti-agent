@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from threading import Event, Lock, Timer
 from typing import Any, Callable, Protocol
 
-from .kernel import KernelResult
+from .kernel import PROGRAM_OUTPUT_LIMIT, KernelResult
 from .supervisor import Supervisor
 from .token_budget import TokenBudgetExceeded, TokenReservation, estimate_tokens
 
@@ -72,6 +72,9 @@ It is an API, not a dictionary: use `context.local.set(key, value, model_visible
 `context.local.get(key)`, and `context.local.clear(key=key)`; never use brackets,
 assignment, `.pop()`, or `.get()` on inbox messages. Inbox messages support both
 `message["id"]` and `message["message_id"]` as aliases.
+If the activation contains `previous_program`, it is the program you ran for this
+same message and its printed output. Continue from that observation: answer the user
+when you have what you need, rather than repeating the inspection.
 If `model_feedback` is present, your previous program was rejected. Correct the
 specific error and return one replacement Python program; do not discuss it.
 `model_feedback.failed_program` is the exact Python source that failed. Inspect
@@ -598,6 +601,11 @@ def driver_from_policy(specification: dict[str, Any], request_timeout: float = D
     """Construct a provider driver from the durable, user-editable policy form."""
     provider = str(specification.get("provider", "")).strip().lower().replace(" ", "")
     model = specification.get("model")
+    if provider == "opencode":
+        from .opencode_driver import DEFAULT_OPENCODE_MODEL, OpencodeAgentDriver
+        if model is not None and (not isinstance(model, str) or not model.strip()):
+            raise ValueError("provider model must be a non-empty string")
+        return OpencodeAgentDriver(model or DEFAULT_OPENCODE_MODEL, request_timeout=max(request_timeout, 180.0))
     factories = {
         "openai": (OpenAIAgentDriver, DEFAULT_OPENAI_MODEL),
         "openrouter": (OpenRouterAgentDriver, DEFAULT_OPENROUTER_MODEL),
@@ -624,11 +632,13 @@ class OpenAIAgentController:
         agent: str = "agent",
         *,
         default_context_window: bool = True,
+        observe_program_output: bool = False,
     ) -> None:
         self.supervisor = supervisor
         self.driver = driver
         self.agent = agent
         self.default_context_window = default_context_window
+        self.observe_program_output = observe_program_output
 
     def run_turn(
         self,
@@ -664,6 +674,10 @@ class OpenAIAgentController:
             available_agents = self.supervisor.agent_roles(exclude=self.agent)
             if available_agents:
                 activation[0]["available_agents"] = available_agents
+        if self.observe_program_output:
+            previous = self.supervisor.observable_state.get(self.agent, "last_program")
+            if previous is not None and previous.value.get("message_id") == relevant[-1].id:
+                activation[0]["previous_program"] = {key: previous.value[key] for key in ("source", "status", "output", "error")}
         feedback_value = self.supervisor.observable_state.get(self.agent, "model_error")
         model_feedback = feedback_value.value if feedback_value is not None and feedback_value.value.get("active") else None
         scopes = [("session", "")]
@@ -771,6 +785,16 @@ class OpenAIAgentController:
             result = self.supervisor.agent_kernel(self.agent).evaluate(planned.source)
         finally:
             self.supervisor.clear_turn_messages(self.agent)
+        if self.observe_program_output:
+            self.supervisor.publish_state(
+                self.agent,
+                "last_program",
+                {"message_id": relevant[-1].id, "source": planned.source[-PROGRAM_OUTPUT_LIMIT:], "status": result.status,
+                 "output": result.output, "error": result.error},
+                presenter="json",
+                label="Last program output",
+                show_by_default=False,
+            )
         if result.status == "ok":
             self.supervisor.publish_state(
                 self.agent,

@@ -104,10 +104,12 @@ class SingleAgentSession:
         on_delta=None,
         on_phase=None,
         default_context_window: bool = True,
+        observe_program_output: bool = False,
     ) -> KernelResult | None:
         from .openai_driver import OpenAIAgentController
         result = OpenAIAgentController(
             self.supervisor, driver, self.agent, default_context_window=default_context_window,
+            observe_program_output=observe_program_output,
         ).run_turn(
             on_delta=on_delta,
             on_program=self._append_model_program,
@@ -136,6 +138,7 @@ class SingleAgentSession:
             "status": result.status,
             "value": result.value,
             "error": result.error,
+            "output": result.output,
         })
 
     def _append_model_log_entry(self, entry: dict) -> None:
