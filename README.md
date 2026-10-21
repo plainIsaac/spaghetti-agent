@@ -170,6 +170,11 @@ Configure the matching environment variable and choose a provider:
 | Gemini | `--gemini` | `GEMINI_API_KEY` |
 | OpenAI | `--openai` | `OPENAI_API_KEY` |
 
+OpenAI authentication is selectable with `--openai-auth api-key` (the default)
+or `--openai-auth device`. Device mode is explicit and requires a runtime host
+that supplies the authenticated OpenAI/Codex device session; it never falls
+back to an API key or writes credentials to the project.
+
 Useful runtime options:
 
 ```text

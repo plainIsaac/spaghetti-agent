@@ -7,6 +7,9 @@ import ast
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 from threading import Event, Lock, Timer
@@ -26,6 +29,9 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_CONTEXT_WINDOW_MESSAGES = 8
 DEFAULT_CONTEXT_WINDOW_CHARS = 4_000
 DEFAULT_PENDING_WORK_ITEMS = 6
+OPENAI_AUTH_API_KEY = "api-key"
+OPENAI_AUTH_DEVICE = "device"
+OPENAI_AUTH_MODES = (OPENAI_AUTH_API_KEY, OPENAI_AUTH_DEVICE)
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
 Return only Python source code to evaluate in that REPL; do not use Markdown
@@ -224,6 +230,7 @@ class OpenAICompatibleAgentDriver:
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         transport: str = "responses",
         output_token_reserve: int = 1_024,
+        auth_mode: str = OPENAI_AUTH_API_KEY,
     ) -> None:
         self.model = model
         self._client = client
@@ -235,6 +242,9 @@ class OpenAICompatibleAgentDriver:
         self.request_timeout = request_timeout
         self.transport = transport
         self.output_token_reserve = output_token_reserve
+        if auth_mode not in OPENAI_AUTH_MODES:
+            raise ValueError(f"unsupported OpenAI authentication mode: {auth_mode!r}")
+        self.auth_mode = auth_mode
         self._http_log_path: Path | None = None
 
     def set_http_log_path(self, path: str) -> None:
@@ -250,7 +260,7 @@ class OpenAICompatibleAgentDriver:
             close()
 
     def clone(self) -> "OpenAICompatibleAgentDriver":
-        clone = type(self)(self.model, request_timeout=self.request_timeout)
+        clone = type(self)(self.model, request_timeout=self.request_timeout, auth_mode=self.auth_mode)
         clone.output_token_reserve = self.output_token_reserve
         return clone
 
@@ -422,6 +432,11 @@ class OpenAICompatibleAgentDriver:
     def _get_client(self) -> ResponsesClient:
         if self._client is not None:
             return self._client
+        if self.auth_mode == OPENAI_AUTH_DEVICE:
+            raise OpenAIConfigurationError(
+                "OpenAI device authorization is selected, but this runtime has no device-authenticated OpenAI client. "
+                "Complete device authorization through the configured OpenAI/Codex host, then use --openai-auth api-key."
+            )
         api_key = os.environ.get(self.api_key_environment)
         if not api_key:
             raise OpenAIConfigurationError(
@@ -489,6 +504,7 @@ class OpenAIAgentDriver(OpenAICompatibleAgentDriver):
         model: str = DEFAULT_OPENAI_MODEL,
         client: ResponsesClient | None = None,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        auth_mode: str = OPENAI_AUTH_API_KEY,
     ) -> None:
         super().__init__(
             model,
@@ -496,7 +512,91 @@ class OpenAIAgentDriver(OpenAICompatibleAgentDriver):
             provider_name="OpenAI",
             api_key_environment="OPENAI_API_KEY",
             request_timeout=request_timeout,
+            auth_mode=auth_mode,
         )
+
+    @staticmethod
+    def _codex_executable() -> str:
+        executable = os.environ.get("SPAGHETTI_CODEX_EXECUTABLE") or shutil.which("codex")
+        if not executable:
+            raise OpenAIConfigurationError(
+                "OpenAI device authorization requires the official Codex CLI (`codex`) to be installed and on PATH"
+            )
+        return executable
+
+    def _ensure_device_login(self) -> str:
+        executable = self._codex_executable()
+        status = subprocess.run(
+            [executable, "login", "status"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=max(self.request_timeout, 10.0),
+        )
+        if status.returncode != 0:
+            print("OpenAI device sign-in is required. Complete the Codex device authorization in the displayed browser flow.")
+            completed = subprocess.run([executable, "login", "--device-auth"], check=False)
+            if completed.returncode != 0:
+                raise OpenAIConfigurationError("Codex device authorization did not complete successfully")
+        return executable
+
+    def _plan_via_codex(
+        self,
+        activation: list[dict[str, Any]],
+        model_feedback: dict[str, Any] | None,
+        on_delta: Callable[[str], None] | None,
+        role: str,
+    ) -> PlannedTurn:
+        executable = self._ensure_device_login()
+        request = {"activation": activation, "model_feedback": model_feedback}
+        prompt = _INSTRUCTIONS + _ROLE_POLICIES.get(role, "\nRole policy: Complete only your assigned task and communicate durable results.")
+        prompt += "\nReturn only the Python source for this activation.\nRequest:\n" + json.dumps(request)
+        output_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(prefix="spaghetti-codex-", suffix=".txt", delete=False) as output:
+                output_path = output.name
+            completed = subprocess.run(
+                [executable, "exec", "--ephemeral", "--skip-git-repo-check", "--model", self.model, "--output-last-message", output_path, prompt],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=max(self.request_timeout, 60.0),
+            )
+            if completed.returncode != 0:
+                raise RuntimeError("Codex device-authenticated model execution failed")
+            raw_output = Path(output_path).read_text(encoding="utf-8")
+            source = self._strip_code_fence(raw_output)
+            if not source.strip():
+                raise RuntimeError("Codex returned an empty agent program")
+            if on_delta is not None:
+                on_delta(raw_output)
+            return PlannedTurn(source, request, raw_output, self.model)
+        finally:
+            if output_path:
+                try:
+                    Path(output_path).unlink()
+                except FileNotFoundError:
+                    pass
+
+    def plan(
+        self,
+        activation: list[dict[str, Any]],
+        model_feedback: dict[str, Any] | None,
+        on_delta: Callable[[str], None] | None = None,
+        role: str = "agent",
+    ) -> PlannedTurn:
+        if self.auth_mode == OPENAI_AUTH_DEVICE:
+            return self._plan_via_codex(activation, model_feedback, on_delta, role)
+        return super().plan(activation, model_feedback, on_delta, role)
+
+    def validate_configuration(self) -> None:
+        if self.auth_mode == OPENAI_AUTH_DEVICE:
+            self._ensure_device_login()
+            return
+        super().validate_configuration()
 
 
 class OpenRouterAgentDriver(OpenAICompatibleAgentDriver):
@@ -605,7 +705,10 @@ def driver_from_policy(specification: dict[str, Any], request_timeout: float = D
         raise ValueError(f"unknown inference provider: {specification.get('provider')!r}") from error
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ValueError("provider model must be a non-empty string")
-    return factory(model or default_model, request_timeout=request_timeout)
+    options = {"request_timeout": request_timeout}
+    if factory is OpenAIAgentDriver and "auth_mode" in specification:
+        options["auth_mode"] = specification["auth_mode"]
+    return factory(model or default_model, **options)
 
 
 class OpenAIAgentController:

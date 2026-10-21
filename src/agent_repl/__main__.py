@@ -14,6 +14,8 @@ from .openai_driver import (
     DEFAULT_OPENROUTER_MODEL,
     DEFAULT_GROQ_MODEL,
     DEFAULT_GEMINI_MODEL,
+    OPENAI_AUTH_API_KEY,
+    OPENAI_AUTH_MODES,
     GroqAgentDriver,
     GeminiAgentDriver,
     FallbackAgentDriver,
@@ -287,6 +289,7 @@ def main() -> None:
     turn_mode = parser.add_mutually_exclusive_group()
     turn_mode.add_argument("--demo", action="store_true", help="Run a deterministic demo agent turn after each normal message")
     turn_mode.add_argument("--openai", action="store_true", help="Run an OpenAI-planned agent turn after each normal message")
+    parser.add_argument("--openai-auth", choices=OPENAI_AUTH_MODES, default=OPENAI_AUTH_API_KEY, help="OpenAI authentication mode (API key or device authorization)")
     turn_mode.add_argument("--openrouter", action="store_true", help="Run an OpenRouter-planned agent turn after each normal message")
     turn_mode.add_argument("--groq", action="store_true", help="Run a Groq Responses API turn (free-tier testing when available)")
     turn_mode.add_argument("--gemini", action="store_true", help="Run a Gemini compatibility API turn (free-tier testing when available)")
@@ -316,7 +319,7 @@ def main() -> None:
     multi_agent = arguments.multi_agent and not arguments.demo
     model_driver = None
     if arguments.openai:
-        model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
+        model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout, auth_mode=arguments.openai_auth)
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
     if arguments.groq:
