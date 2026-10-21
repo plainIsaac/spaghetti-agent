@@ -7,7 +7,7 @@ import unittest
 
 from agent_repl import OpenAIAgentDriver, SingleAgentSession
 from agent_repl.openai_driver import driver_from_policy
-from agent_repl.opencode_driver import OpencodeAgentDriver, OpencodeClient, OpencodeCompletion
+from agent_repl.opencode_driver import OpencodeAgentDriver, OpencodeClient, OpencodeCompletion, QuotaExceeded, _resets_in
 
 from test_openai_driver import SequenceClient
 
@@ -68,6 +68,17 @@ class OpencodeDriverTests(unittest.TestCase):
         driver = driver_from_policy({"provider": "opencode", "model": "openai/gpt-6-luna"})
         self.assertIsInstance(driver, OpencodeAgentDriver)
         self.assertEqual(driver.model, "openai/gpt-6-luna")
+
+
+class QuotaTests(unittest.TestCase):
+    def test_reset_time_is_read_from_the_provider_error_body(self) -> None:
+        error = {"type": "provider.quota", "message": "The usage limit has been reached",
+                 "response": {"body": json.dumps({"error": {"type": "usage_limit_reached", "resets_in_seconds": 16406}})}}
+        self.assertEqual(_resets_in(error), 16406)
+        self.assertIn("resets in 16406s", str(QuotaExceeded(error["message"], _resets_in(error))))
+
+    def test_missing_reset_time_is_tolerated(self) -> None:
+        self.assertIsNone(_resets_in({"response": {"body": "not json"}}))
 
 
 class ProgramObservationTests(unittest.TestCase):

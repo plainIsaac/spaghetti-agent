@@ -1,0 +1,26 @@
+[
+ {
+  "benchmark": "context_economics",
+  "arm": "runtime-observe-minimal",
+  "model": "opencode-go/minimax-m3.1-flash-free",
+  "label": "free-r1"
+ },
+ {
+  "benchmark": "context_economics",
+  "arm": "transcript-flat",
+  "model": "opencode-go/minimax-m3.1-flash-free",
+  "label": "free-r1"
+ },
+ {
+  "benchmark": "context_economics",
+  "arm": "runtime-observe-minimal",
+  "model": "opencode-go/minimax-m3.1-flash-free",
+  "label": "free-r2"
+ },
+ {
+  "benchmark": "context_economics",
+  "arm": "transcript-flat",
+  "model": "opencode-go/minimax-m3.1-flash-free",
+  "label": "free-r2"
+ }
+]

@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import json
 import os
 import shutil
@@ -29,6 +30,24 @@ from .openai_driver import (
 DEFAULT_OPENCODE_MODEL = "openai/gpt-6-luna"
 DEFAULT_OPENCODE_TIMEOUT_SECONDS = 180.0
 _DEFAULT_ROLE_POLICY = "\nRole policy: Complete only your assigned task and communicate durable results."
+
+
+class QuotaExceeded(RuntimeError):
+    """The provider's usage window is exhausted; retrying before the reset only fails again."""
+
+    def __init__(self, message: str, resets_in_seconds: float | None) -> None:
+        detail = f" (resets in {resets_in_seconds:.0f}s)" if resets_in_seconds is not None else ""
+        super().__init__(f"opencode provider.quota: {message}{detail}")
+        self.resets_in_seconds = resets_in_seconds
+
+
+def _resets_in(error: dict[str, Any]) -> float | None:
+    try:
+        body = json.loads((error.get("response") or {}).get("body") or "{}")
+        value = (body.get("error") or {}).get("resets_in_seconds")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -103,6 +122,8 @@ class OpencodeClient:
             resolved_session = event.get("sessionID") or resolved_session
             if event.get("type") == "error":
                 error = event.get("error") or {}
+                if error.get("type") == "provider.quota":
+                    raise QuotaExceeded(error.get("message", "usage limit reached"), _resets_in(error))
                 raise RuntimeError(f"opencode {error.get('type', 'error')}: {error.get('message', 'unknown failure')}")
             part = event.get("part") or {}
             if event.get("type") == "text" and part.get("text"):
@@ -176,13 +197,15 @@ class OpencodeAgentDriver(OpenAICompatibleAgentDriver):
         request_timeout: float = DEFAULT_OPENCODE_TIMEOUT_SECONDS,
         *,
         keep_sessions: bool = False,
+        instructions: str | None = None,
     ) -> None:
         super().__init__(model, provider_name="opencode", api_key_environment="", request_timeout=request_timeout)
         self.opencode = client or OpencodeClient(timeout=request_timeout)
         self.keep_sessions = keep_sessions
+        self.instructions = instructions  # replaces the default instructions and role policy
 
     def clone(self) -> "OpencodeAgentDriver":
-        clone = OpencodeAgentDriver(self.model, self.opencode, self.request_timeout, keep_sessions=self.keep_sessions)
+        clone = OpencodeAgentDriver(self.model, self.opencode, self.request_timeout, keep_sessions=self.keep_sessions, instructions=self.instructions)
         clone.output_token_reserve = self.output_token_reserve
         return clone
 
@@ -202,8 +225,12 @@ class OpencodeAgentDriver(OpenAICompatibleAgentDriver):
     ) -> PlannedTurn:
         self.validate_configuration()
         request = {"activation": activation, "model_feedback": model_feedback}
-        agent = f"spaghetti-{role}"
-        self.opencode.define_agent(agent, _INSTRUCTIONS + _ROLE_POLICIES.get(role, _DEFAULT_ROLE_POLICY))
+        if self.instructions is not None:
+            agent = f"spaghetti-custom-{hashlib.sha1(self.instructions.encode()).hexdigest()[:8]}"
+            self.opencode.define_agent(agent, self.instructions)
+        else:
+            agent = f"spaghetti-{role}"
+            self.opencode.define_agent(agent, _INSTRUCTIONS + _ROLE_POLICIES.get(role, _DEFAULT_ROLE_POLICY))
         self._append_http_log({"timestamp": datetime.now(timezone.utc).isoformat(), "event": "stream_opened", "provider": self.provider_name, "model": self.model})
         try:
             completion = self.opencode.complete(self.model, agent, json.dumps(request))

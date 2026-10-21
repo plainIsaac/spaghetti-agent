@@ -17,7 +17,7 @@ import time
 import traceback
 from typing import Any, Callable
 
-from agent_repl.opencode_driver import OpencodeAgentDriver, OpencodeClient
+from agent_repl.opencode_driver import OpencodeAgentDriver, OpencodeClient, QuotaExceeded
 
 OUTPUT_LIMIT = 6_000
 MAX_STEPS_PER_MESSAGE = 8
@@ -31,6 +31,24 @@ Use ordinary Python (open, csv, subprocess, and so on) to inspect and change fil
 When you have answered or finished the user's request, call reply(text) with a concise
 message for the user; that ends your turn. Ask the user through reply(text) if something
 important is ambiguous."""
+
+MINIMAL_RUNTIME_PROMPT = """You are an agent inside a persistent Python REPL. Return only Python source to run
+in it: no Markdown fences, no prose.
+Your input is a JSON activation: the user message that triggered you, a short recent
+conversation (`context_window`), notes you saved (`working_context`), and, when you already
+ran a program for this message, `previous_program` with its source and printed output.
+Only REPL variables and the runtime APIs carry over between activations, so continue from
+`previous_program` rather than repeating its inspection.
+
+Injected globals (never import them):
+- inbox.reply_to_latest(text): answer the user. Until you call it you are activated again
+  with your program's printed output.
+- context.user.messages(): the whole conversation with the user, oldest first.
+- context.local.set(key, value, model_visible=True): a small note shown in later
+  activations; use it for facts, conventions and decisions worth keeping.
+- print(): output you will see in the next activation.
+The current directory is the user's project; use ordinary Python (open, csv, subprocess)
+to read and change files. Keep programs short: inspect, then answer."""
 
 Recorder = Callable[[dict[str, Any]], None]
 
@@ -87,14 +105,49 @@ class TranscriptArm:
             self.client.delete_session(self.session_id)
 
 
-class _RecordingDriver(OpencodeAgentDriver):
+class TranscriptFlatArm(TranscriptArm):
+    """The same conversation, sent whole to a fresh session on every call.
+
+    Content matches `TranscriptArm`, but nothing the provider keeps between turns
+    (such as prior reasoning) carries over: the model re-reads text only.
+    """
+
+    name = "transcript-flat"
+
     def __init__(self, model: str, client: OpencodeClient, record: Recorder) -> None:
-        super().__init__(model, client)
+        super().__init__(model, client, record)
+        self.log: list[str] = []
+
+    def handle(self, step: int, text: str) -> list[str]:
+        self.replies.clear()
+        self.log.append(f"[user] {text}")
+        for call in range(MAX_STEPS_PER_MESSAGE):
+            completion = self.client.complete(self.model, "transcript-baseline", "\n\n".join(self.log))
+            self.client.delete_session(completion.session_id)
+            program = OpencodeAgentDriver._strip_code_fence(completion.text)
+            output = self._execute(program)
+            self.record({"step": step, "call": call, "usage": completion.usage, "seconds": completion.duration_seconds,
+                         "program": completion.text, "output": output[:2_000]})
+            self.log.append(f"[your program]\n{program}")
+            self.log.append(f"[program output]\n{output}" if output.strip() else "[program output] (none)")
+            if self.replies:
+                break
+        return list(self.replies)
+
+
+class _RecordingDriver(OpencodeAgentDriver):
+    def __init__(self, model: str, client: OpencodeClient, record: Recorder, instructions: str | None = None) -> None:
+        super().__init__(model, client, instructions=instructions)
         self.record, self.step, self.calls = record, 0, 0
+        self.quota: QuotaExceeded | None = None
 
     def plan(self, activation, model_feedback, on_delta=None, role="agent"):
         started = time.monotonic()
-        planned = super().plan(activation, model_feedback, on_delta, role)
+        try:
+            planned = super().plan(activation, model_feedback, on_delta, role)
+        except QuotaExceeded as error:
+            self.quota = error  # the runtime swallows provider errors; the arm re-raises it
+            raise
         self.record({"step": self.step, "call": self.calls, "usage": planned.usage, "seconds": time.monotonic() - started,
                      "program": planned.raw_output, "activation_chars": len(json.dumps(planned.request))})
         self.calls += 1
@@ -112,14 +165,16 @@ class RuntimeArm:
     MAX_WAKEUPS = 4
 
     def __init__(self, model: str, client: OpencodeClient, record: Recorder, data_dir: Path, continue_until_answered: bool = False,
-                 observe_program_output: bool = False) -> None:
+                 observe_program_output: bool = False, instructions: str | None = None) -> None:
         from agent_repl.session import SingleAgentSession
         self.session = SingleAgentSession.open(str(data_dir / "inbox.sqlite"), str(data_dir / "observable-state.sqlite"))
-        self.driver = _RecordingDriver(model, client, record)
+        self.driver = _RecordingDriver(model, client, record, instructions)
         self.record = record
         self.continue_until_answered = continue_until_answered
         self.observe_program_output = observe_program_output
         self.name = "runtime-observe" if observe_program_output else "runtime-continue" if continue_until_answered else "runtime"
+        if instructions is not None:
+            self.name += "-minimal"
 
     def handle(self, step: int, text: str) -> list[str]:
         self.driver.step, self.driver.calls = step, 0
@@ -144,6 +199,8 @@ class RuntimeArm:
             except Exception as error:  # surfaced runtime defects are part of the measurement
                 self.record({"step": self.driver.step, "runtime_error": f"{type(error).__name__}: {error}"})
                 return
+            if self.driver.quota is not None:
+                raise self.driver.quota
             if result is None or result.status != "error":
                 return
 
