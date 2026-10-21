@@ -168,7 +168,7 @@ Configure the matching environment variable and choose a provider:
 | OpenRouter | `--openrouter` | `OPENROUTER_API_KEY` |
 | Groq | `--groq` | `GROQ_API_KEY` |
 | Gemini | `--gemini` | `GEMINI_API_KEY` |
-| OpenAI | `--openai` | `OPENAI_API_KEY` |
+| OpenAI | `--openai` | `OPENAI_API_KEY` (default) or `--openai-auth device-code` |
 
 Useful runtime options:
 
@@ -179,6 +179,7 @@ Useful runtime options:
 --turn-token-reserve TOKENS     Reserve completion capacity before a turn
 --request-timeout SECONDS       Set first-token and stream-idle timeouts
 --no-subagents                  Disable dynamic agent creation
+--openai-auth device-code       Use OpenAI ChatGPT device authorization instead of an API key
 ```
 
 Provider-reported usage is used when available; otherwise Spaghetti Agent records a

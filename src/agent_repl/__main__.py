@@ -302,6 +302,12 @@ def main() -> None:
     parser.add_argument("--web-port", type=int, default=8765, help="Local browser UI port")
     parser.add_argument("--model", help="Provider model override")
     parser.add_argument(
+        "--openai-auth",
+        choices=("api-key", "device-code"),
+        default=os.environ.get("OPENAI_AUTH_METHOD", "api-key"),
+        help="OpenAI authentication method (API key remains the default)",
+    )
+    parser.add_argument(
         "--default-context-window",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -316,7 +322,11 @@ def main() -> None:
     multi_agent = arguments.multi_agent and not arguments.demo
     model_driver = None
     if arguments.openai:
-        model_driver = OpenAIAgentDriver(arguments.model or DEFAULT_OPENAI_MODEL, request_timeout=arguments.request_timeout)
+        model_driver = OpenAIAgentDriver(
+            arguments.model or DEFAULT_OPENAI_MODEL,
+            request_timeout=arguments.request_timeout,
+            auth_method=arguments.openai_auth,
+        )
     if arguments.openrouter:
         model_driver = OpenRouterAgentDriver(arguments.model or DEFAULT_OPENROUTER_MODEL, request_timeout=arguments.request_timeout)
     if arguments.groq:
@@ -348,9 +358,9 @@ def main() -> None:
                 driver.output_token_reserve = policy.get("turn_token_reserve", arguments.turn_token_reserve)
             session.start_workers(drivers, arguments.default_context_window)
             session.supervisor.allow_subagents = not arguments.no_subagents
-        policy_providers = ([{"provider": driver.provider_name, "model": driver.model} for driver in model_driver.drivers]
+        policy_providers = ([{"provider": driver.provider_name, "model": driver.model, **({"auth_method": driver.auth_method} if isinstance(driver, OpenAIAgentDriver) else {})} for driver in model_driver.drivers]
                             if isinstance(model_driver, FallbackAgentDriver)
-                            else [{"provider": model_driver.provider_name, "model": model_driver.model}])
+                            else [{"provider": model_driver.provider_name, "model": model_driver.model, **({"auth_method": model_driver.auth_method} if isinstance(model_driver, OpenAIAgentDriver) else {})}])
         manager = ProjectManager(
             arguments.projects_dir,
             configure_session=configure_project,

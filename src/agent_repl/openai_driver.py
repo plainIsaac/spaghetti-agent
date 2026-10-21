@@ -7,6 +7,9 @@ import ast
 import json
 import os
 import re
+import time
+from urllib import request as urlrequest
+from urllib.error import HTTPError
 from pathlib import Path
 from datetime import datetime, timezone
 from threading import Event, Lock, Timer
@@ -26,6 +29,13 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_CONTEXT_WINDOW_MESSAGES = 8
 DEFAULT_CONTEXT_WINDOW_CHARS = 4_000
 DEFAULT_PENDING_WORK_ITEMS = 6
+
+OPENAI_AUTH_METHOD_API_KEY = "api-key"
+OPENAI_AUTH_METHOD_DEVICE_CODE = "device-code"
+DEFAULT_OPENAI_AUTH_METHOD = OPENAI_AUTH_METHOD_API_KEY
+DEFAULT_OPENAI_AUTH_ISSUER = "https://auth.openai.com"
+DEFAULT_OPENAI_DEVICE_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+DEFAULT_OPENAI_DEVICE_TIMEOUT_SECONDS = 15 * 60
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
 Return only Python source code to evaluate in that REPL; do not use Markdown
@@ -199,6 +209,79 @@ class OpenAIConfigurationError(RuntimeError):
 
 class ProviderFallbackError(RuntimeError):
     pass
+
+
+def _device_code_access_token(
+    *,
+    issuer: str = DEFAULT_OPENAI_AUTH_ISSUER,
+    client_id: str = DEFAULT_OPENAI_DEVICE_CLIENT_ID,
+    timeout: float = DEFAULT_OPENAI_DEVICE_TIMEOUT_SECONDS,
+) -> str:
+    """Run OpenAI's device flow without persisting or accepting the user code.
+
+    The one-time code is displayed only for the user to enter at the official
+    verification URL. Tokens remain in memory and are handed directly to the
+    SDK client; this driver deliberately has no credential cache.
+    """
+    base = issuer.rstrip("/")
+
+    def post_json(url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        body = json.dumps(payload).encode("utf-8")
+        req = urlrequest.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urlrequest.urlopen(req, timeout=30) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            raw = error.read().decode("utf-8", errors="replace")
+            try:
+                details = json.loads(raw)
+            except json.JSONDecodeError:
+                details = {"error": raw}
+            return error.code, details
+
+    status, device = post_json(
+        f"{base}/api/accounts/deviceauth/usercode",
+        {"client_id": client_id},
+    )
+    if status < 200 or status >= 300:
+        raise OpenAIConfigurationError(f"OpenAI device-code request failed with HTTP {status}")
+    verification_url = str(device.get("verification_url") or f"{base}/codex/device")
+    user_code = str(device.get("user_code") or device.get("usercode") or "")
+    device_auth_id = str(device.get("device_auth_id") or "")
+    if not user_code or not device_auth_id:
+        raise OpenAIConfigurationError("OpenAI device-code response was missing its one-time code")
+    interval = max(1.0, float(device.get("interval", 5)))
+    print(f"OpenAI device sign-in required. Open {verification_url} and enter the one-time code: {user_code}")
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status, result = post_json(
+            f"{base}/api/accounts/deviceauth/token",
+            {"device_auth_id": device_auth_id, "user_code": user_code},
+        )
+        if 200 <= status < 300:
+            authorization_code = result.get("authorization_code")
+            code_verifier = result.get("code_verifier")
+            if not authorization_code or not code_verifier:
+                raise OpenAIConfigurationError("OpenAI device-code response was missing its authorization exchange data")
+            status, tokens = post_json(
+                f"{base}/oauth/token",
+                {
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": authorization_code,
+                    "code_verifier": code_verifier,
+                    "redirect_uri": f"{base}/deviceauth/callback",
+                },
+            )
+            access_token = tokens.get("access_token")
+            if status < 200 or status >= 300 or not access_token:
+                raise OpenAIConfigurationError(f"OpenAI device-code token exchange failed with HTTP {status}")
+            return str(access_token)
+        if status not in (403, 404, 408, 429):
+            raise OpenAIConfigurationError(f"OpenAI device-code polling failed with HTTP {status}")
+        time.sleep(min(interval, max(0.0, deadline - time.monotonic())))
+    raise OpenAIConfigurationError("OpenAI device-code sign-in timed out after 15 minutes")
 
 
 @dataclass(frozen=True)
@@ -489,6 +572,7 @@ class OpenAIAgentDriver(OpenAICompatibleAgentDriver):
         model: str = DEFAULT_OPENAI_MODEL,
         client: ResponsesClient | None = None,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        auth_method: str = DEFAULT_OPENAI_AUTH_METHOD,
     ) -> None:
         super().__init__(
             model,
@@ -497,6 +581,36 @@ class OpenAIAgentDriver(OpenAICompatibleAgentDriver):
             api_key_environment="OPENAI_API_KEY",
             request_timeout=request_timeout,
         )
+        normalized_auth_method = auth_method.strip().lower().replace("_", "-")
+        if normalized_auth_method not in {OPENAI_AUTH_METHOD_API_KEY, OPENAI_AUTH_METHOD_DEVICE_CODE}:
+            raise ValueError("OpenAI auth method must be 'api-key' or 'device-code'")
+        self.auth_method = normalized_auth_method
+
+    def clone(self) -> "OpenAIAgentDriver":
+        clone = type(self)(self.model, request_timeout=self.request_timeout, auth_method=self.auth_method)
+        clone.output_token_reserve = self.output_token_reserve
+        return clone
+
+    def _get_client(self) -> ResponsesClient:
+        if self.auth_method == OPENAI_AUTH_METHOD_API_KEY:
+            return super()._get_client()
+        if self._client is not None:
+            return self._client
+        try:
+            from openai import OpenAI
+        except ImportError as error:
+            raise OpenAIConfigurationError(
+                "Install the optional OpenAI-compatible SDK: python -m pip install -e '.[openai]'"
+            ) from error
+        options: dict[str, Any] = {
+            "api_key": _device_code_access_token(),
+            "timeout": self.request_timeout,
+            "max_retries": 0,
+        }
+        with self._client_lock:
+            if self._client is None:
+                self._client = OpenAI(**options)
+            return self._client
 
 
 class OpenRouterAgentDriver(OpenAICompatibleAgentDriver):
@@ -605,6 +719,9 @@ def driver_from_policy(specification: dict[str, Any], request_timeout: float = D
         raise ValueError(f"unknown inference provider: {specification.get('provider')!r}") from error
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ValueError("provider model must be a non-empty string")
+    if provider == "openai":
+        auth_method = specification.get("auth_method", DEFAULT_OPENAI_AUTH_METHOD)
+        return factory(model or default_model, request_timeout=request_timeout, auth_method=auth_method)
     return factory(model or default_model, request_timeout=request_timeout)
 
 
