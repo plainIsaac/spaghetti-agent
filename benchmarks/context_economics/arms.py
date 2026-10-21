@@ -162,7 +162,7 @@ class RuntimeArm:
     """
 
     MAX_REPAIRS = 2
-    MAX_WAKEUPS = 4
+    MAX_WAKEUPS = MAX_STEPS_PER_MESSAGE - 1  # same program budget per message as the transcript arms
 
     def __init__(self, model: str, client: OpencodeClient, record: Recorder, data_dir: Path, continue_until_answered: bool = False,
                  observe_program_output: bool = False, instructions: str | None = None) -> None:
