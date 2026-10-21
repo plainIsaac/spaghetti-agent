@@ -71,14 +71,24 @@ class OpencodeClient:
             path.write_text(definition, encoding="utf-8")
 
     def complete(self, model: str, agent: str, message: str, session_id: str | None = None) -> OpencodeCompletion:
+        try:
+            return self._complete(model, agent, message, session_id)
+        except RuntimeError as error:
+            if "Agent not found" not in str(error):
+                raise
+            # The background service may not have noticed a just-written agent definition yet.
+            self._run(["reload"])
+            return self._complete(model, agent, message, session_id)
+
+    def _complete(self, model: str, agent: str, message: str, session_id: str | None = None) -> OpencodeCompletion:
         command = [self.executable, "run", "--format", "json", "--agent", agent, "-m", model, "--title", f"spaghetti-agent {agent}"]
         if session_id:
             command += ["--session", session_id]
-        command.append(message)
         opened = datetime.now(timezone.utc)
         try:
+            # The message goes through stdin: argv caps a single argument at 128 KiB.
             process = subprocess.run(
-                command, cwd=self.work_dir, env=self._environment(), stdin=subprocess.DEVNULL, capture_output=True,
+                command, cwd=self.work_dir, env=self._environment(), input=message, capture_output=True,
                 text=True, encoding="utf-8", errors="replace", timeout=self.timeout,
             )
         except subprocess.TimeoutExpired as error:
