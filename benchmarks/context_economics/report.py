@@ -50,7 +50,7 @@ def cost(run: dict, sheet: str, mode: str) -> float:
     """mode: warm (cache never expires), resume (cache expires before PAUSE_BEFORE), none."""
     prices = PRICES[sheet]
     prefix = static_prefix(run)
-    transcript = run["arm"] == "transcript"
+    transcript = run["arm"].startswith("transcript")
     total, previous = 0.0, None
     for call in run["calls"]:
         usage = call["usage"]
@@ -79,9 +79,10 @@ def cost(run: dict, sheet: str, mode: str) -> float:
 
 def summarize(runs: list[dict]) -> dict:
     by_arm: dict[str, list[dict]] = defaultdict(list)
+    models = {run["model"] for run in runs}
     for run in runs:
-        arm = run["arm"]
-        by_arm[arm].append(run)
+        # Group by model too when runs mix models, e.g. "transcript @ openai/gpt-6.1-sol#high".
+        by_arm[run["arm"] if len(models) == 1 else f"{run['arm']} @ {run['model']}"].append(run)
     summary = {}
     for arm, group in sorted(by_arm.items()):
         def mean(values):

@@ -27,6 +27,7 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_CONTEXT_WINDOW_MESSAGES = 8
 DEFAULT_CONTEXT_WINDOW_CHARS = 4_000
 DEFAULT_PENDING_WORK_ITEMS = 6
+PROGRAM_TIMEOUT_SECONDS = 60.0  # matches workspace.run's cap; the kernel default (2 s) is for interactive inspection
 
 _INSTRUCTIONS = """You are the agent inside a persistent Python REPL.
 Return only Python source code to evaluate in that REPL; do not use Markdown
@@ -782,7 +783,10 @@ class OpenAIAgentController:
             on_phase("executing")
         self.supervisor.set_turn_messages(self.agent, [relevant[-1].id])
         try:
-            result = self.supervisor.agent_kernel(self.agent).evaluate(planned.source)
+            result = self.supervisor.agent_kernel(self.agent).evaluate(planned.source, timeout=PROGRAM_TIMEOUT_SECONDS)
+        except TimeoutError:
+            result = KernelResult("error", error=f"TimeoutError: the program did not finish within {PROGRAM_TIMEOUT_SECONDS:.0f}s; "
+                                                 "split long work into smaller programs or bound it explicitly")
         finally:
             self.supervisor.clear_turn_messages(self.agent)
         if self.observe_program_output:

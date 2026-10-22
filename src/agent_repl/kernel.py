@@ -12,6 +12,7 @@ from multiprocessing import get_context
 from multiprocessing.queues import Queue
 import queue
 import threading
+import time
 from typing import Any, Callable
 
 from .journal import Message
@@ -773,11 +774,18 @@ class PersistentKernel:
             started_at = datetime.now(UTC)
             self._set_execution(ExecutionState(request_id, "running", started_at))
             self._commands.put({"kind": "evaluate", "request_id": request_id, "source": source})
-            try:
-                response = self._responses.get(timeout=timeout)
-            except queue.Empty as error:
-                self._set_execution(ExecutionState(request_id, "unresponsive", started_at, error="evaluation timed out"))
-                raise TimeoutError("Evaluation did not yield a result") from error
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    response = self._responses.get(timeout=max(0.0, deadline - time.monotonic()))
+                except queue.Empty as error:
+                    self._set_execution(ExecutionState(request_id, "unresponsive", started_at, error="evaluation timed out"))
+                    raise TimeoutError("Evaluation did not yield a result") from error
+                # A program that outlived an earlier timeout still answers eventually; drop that
+                # stale result instead of pairing it with this request.
+                if response["request_id"] < request_id:
+                    continue
+                break
         if response["request_id"] != request_id:
             raise RuntimeError("Received a response for another evaluation")
         result = KernelResult(response["status"], response.get("value"), response.get("error"), response.get("output", ""))

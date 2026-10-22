@@ -18,9 +18,10 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "src"))
 
-from agent_repl.opencode_driver import DEFAULT_OPENCODE_MODEL, OpencodeClient  # noqa: E402
+from agent_repl.opencode_driver import DEFAULT_OPENCODE_MODEL, OpencodeClient, QuotaExceeded  # noqa: E402
+import shutil  # noqa: E402
 
-from .arms import RuntimeArm, TranscriptArm  # noqa: E402
+from .arms import MINIMAL_RUNTIME_PROMPT, RuntimeArm, TranscriptArm, TranscriptFlatArm  # noqa: E402
 from .scenario import build_workspace, steps  # noqa: E402
 
 RESULTS = HERE / "results"
@@ -28,7 +29,7 @@ RESULTS = HERE / "results"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--arm", choices=["runtime", "runtime-continue", "runtime-observe", "transcript"], required=True)
+    parser.add_argument("--arm", choices=["runtime", "runtime-continue", "runtime-observe", "runtime-observe-minimal", "transcript", "transcript-flat"], required=True)
     parser.add_argument("--model", default=DEFAULT_OPENCODE_MODEL)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--steps", type=int, default=12, help="Run only the first N messages (for smoke tests)")
@@ -51,9 +52,13 @@ def main() -> None:
     os.chdir(workspace)  # both arms treat the current directory as the project
     if arguments.arm == "transcript":
         arm = TranscriptArm(arguments.model, client, record)
+    elif arguments.arm == "transcript-flat":
+        arm = TranscriptFlatArm(arguments.model, client, record)
     else:
         arm = RuntimeArm(arguments.model, client, record, run_dir / "runtime",
-                         continue_until_answered=arguments.arm != "runtime", observe_program_output=arguments.arm == "runtime-observe")
+                         continue_until_answered=arguments.arm != "runtime",
+                         observe_program_output=arguments.arm.startswith("runtime-observe"),
+                         instructions=MINIMAL_RUNTIME_PROMPT if arguments.arm.endswith("-minimal") else None)
     outcomes = []
     try:
         for step in steps(expected)[: arguments.steps]:
@@ -61,6 +66,11 @@ def main() -> None:
             try:
                 replies = arm.handle(step.number, step.text)
                 error = None
+            except QuotaExceeded as quota:
+                # A partial run is not comparable; discard it so the matrix reruns it after the reset.
+                shutil.rmtree(run_dir, ignore_errors=True)
+                print(f"QUOTA {quota}", flush=True)
+                raise SystemExit(75)
             except Exception as failure:
                 replies, error = [], f"{type(failure).__name__}: {failure}"
             joined = "\n".join(replies)
