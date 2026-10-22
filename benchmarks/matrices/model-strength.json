@@ -58,5 +58,17 @@
   "arm": "transcript-flat",
   "model": "openai/gpt-6.1-sol#low",
   "label": "sol-low-r1"
+ },
+ {
+  "benchmark": "context_economics",
+  "arm": "runtime-observe-minimal",
+  "model": "openai/gpt-6.1-sol#high",
+  "label": "sol-high-cap8"
+ },
+ {
+  "benchmark": "context_economics",
+  "arm": "runtime-observe-minimal",
+  "model": "openai/gpt-6.1-sol#medium",
+  "label": "sol-medium-cap8"
  }
 ]
